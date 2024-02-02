@@ -10,6 +10,7 @@ def create_flash_default_data(length):
     return datas
 
 def gen_flash_bin():
+    rootfs_base = 0x480000
     bootload_file = "../pre_build_bin/spl_bl808_d0.bin"
     dtb_file = "hw.dtb.5M"                  # 64k
     opensbi_file = "../pre_build_bin/opensbi_v0.6.bin"       # 64k
@@ -21,8 +22,9 @@ def gen_flash_bin():
     dtb_file_size = os.stat(dtb_file).st_size
     linux_opensbi_file_size = os.stat(opensbi_file).st_size
     kernel_file_size = os.stat(kernel_file).st_size
+    rootfs_file_size = os.stat(linux_rootfs_file).st_size
 
-    whole_img_data = create_flash_default_data(0x10000 + 0x10000 + 0x10000 + kernel_file_size)
+    whole_img_data = create_flash_default_data(rootfs_base + rootfs_file_size)
 
     # bootload
     print("bootload size:", bootload_file_size)
@@ -87,9 +89,12 @@ def gen_flash_bin():
     b2 = (linux_rootfs_file_size & 0xff00) >> 8
     b3 = linux_rootfs_file_size & 0xff
     header3 = [b3,b2,b1,b0]
-    whole_img_data[0x47fffC:0x480000] = bytearray((header3)) # rootfs header
-    whole_img_data[0x480000:0x480000+len(data3)] = data3 #3M  start 5M
-    
+
+    #rootfs header
+    whole_img_data[rootfs_base-4:rootfs_base] = bytearray((header3))
+    whole_img_data[rootfs_base:rootfs_base+len(data3)] = data3
+
+    print("kernel_out_img_file size", len(whole_img_data))
 
     fp = open(kernel_out_img_file, 'wb+')
     fp.write(whole_img_data)

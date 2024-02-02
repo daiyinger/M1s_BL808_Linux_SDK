@@ -3,6 +3,7 @@ set -e
 
 SHELL_DIR=$(cd "$(dirname "$0")"; pwd)
 OUT_DIR=$SHELL_DIR/out
+PRE_BUILD_DIR=$SHELL_DIR/pre_build_bin
 
 CMAKE=$SHELL_DIR/toolchain/cmake/bin/
 
@@ -23,7 +24,8 @@ build_linux()
     if [ ! -f .config ]; then
         cp c906.config .config
     fi
-    make ARCH=riscv CROSS_COMPILE=$LINUX_CROSS_PREFIX Image -j$(nproc)
+    make ARCH=riscv CROSS_COMPILE=$LINUX_CROSS_PREFIX Image modules -j$(nproc)
+    make ARCH=riscv CROSS_COMPILE=$LINUX_CROSS_PREFIX modules_install INSTALL_MOD_PATH=$OUT_DIR/modules 
     echo " "
     echo "=========== high compression kernel image =========="
     lz4 -9 -f $SHELL_DIR/linux-5.10.4-808/arch/riscv/boot/Image $SHELL_DIR/linux-5.10.4-808/arch/riscv/boot/Image.lz4
@@ -81,6 +83,11 @@ build_whole_bin()
 {
     echo " "
     echo "================ build whole bin =================="
+    cd $PRE_BUILD_DIR
+    ./mk_rootfs.sh
+    rm -f ramdisk  
+    mv ramdisk.lz4 ../out  
+    cd -
     cd $OUT_DIR
     python3 merge_7_5Mbin.py
 }

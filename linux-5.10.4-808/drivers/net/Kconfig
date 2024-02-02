@@ -592,5 +592,8 @@ config NET_FAILOVER
 	  an alternate low latency datapath. It also enables live migration of
 	  a VM with direct attached VF by failing over to the paravirtual
 	  datapath when the VF is unplugged.
-
+config CONFIG_XRAM_NET
+	tristate "xram net"
+	default m
+	
 endif # NETDEVICES

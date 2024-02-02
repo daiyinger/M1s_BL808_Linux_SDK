@@ -1,106 +1,111 @@
 /dts-v1/;
+
 / {
 	model = "T-HEAD c906 simple soc";
 	compatible = "thead,c910_simple_soc";
-	#address-cells = <2>;
-	#size-cells = <2>;
+	#address-cells = <0x2>;
+	#size-cells = <0x2>;
 
 	memory@0 {
 		device_type = "memory";
-		reg = <0x0 0x50000000 0x0 0x04000000>;
+		reg = <0x0 0x50000000 0x0 0x3F00000>;
 	};
 
 	cpus {
-		#address-cells = <1>;
-		#size-cells = <0>;
-		timebase-frequency = <1000000>;
+		#address-cells = <0x1>;
+		#size-cells = <0x0>;
+		timebase-frequency = <0xf4240>;
+
 		cpu@0 {
 			device_type = "cpu";
-			reg = <0>;
+			reg = <0x0>;
 			status = "okay";
 			compatible = "riscv";
 			riscv,isa = "rv64imafdcvsu";
 			mmu-type = "riscv,sv39";
-			cpu0_intc: interrupt-controller {
-				#interrupt-cells = <1>;
+
+			interrupt-controller {
+				#interrupt-cells = <0x1>;
 				compatible = "riscv,cpu-intc";
 				interrupt-controller;
+				phandle = <0x1>;
 			};
 		};
 	};
 
 	soc {
-		#address-cells = <2>;
-		#size-cells = <2>;
+		#address-cells = <0x2>;
+		#size-cells = <0x2>;
 		compatible = "simple-bus";
 		ranges;
 
-		intc: interrupt-controller@e0000000 {
-			#interrupt-cells = <1>;
+		interrupt-controller@e0000000 {
+			#interrupt-cells = <0x1>;
 			compatible = "riscv,plic0";
 			interrupt-controller;
-			interrupts-extended = <
-				&cpu0_intc  0xffffffff &cpu0_intc  9
-				>;
-			reg = <0x0 0xe0000000 0x0 0x04000000>;
+			interrupts-extended = <0x1 0xffffffff 0x1 0x9>;
+			reg = <0x0 0xe0000000 0x0 0x4000000>;
 			reg-names = "control";
-			riscv,max-priority = <7>;
-			riscv,ndev = <64>;
+			riscv,max-priority = <0x7>;
+			riscv,ndev = <0x40>;
+			phandle = <0x2>;
 		};
 
-		mm_xclk: mm-clock {
+		mm-clock {
 			compatible = "fixed-clock";
-			clock-frequency = <40000000>;
+			clock-frequency = <0x2625a00>;
 			clock-output-names = "mm_xclk";
-			#clock-cells = <0>;
+			#clock-cells = <0x0>;
+			phandle = <0x3>;
 		};
 
-		pmu: pmu {
-			interrupt-parent = <&cpu0_intc>;
-			interrupts = <17>;
+		pmu {
+			interrupt-parent = <0x1>;
+			interrupts = <0x11>;
 			compatible = "thead,c900_pmu";
 		};
 
 		serial@30002000 {
 			compatible = "bflb-uart,uart0";
 			reg = <0x0 0x30002000 0x0 0x1000>;
-			interrupt-parent = <&intc>;
-			interrupts = <20>;
-			clocks = <&mm_xclk>;
-			clock-frequency = <40000000>;
+			interrupt-parent = <0x2>;
+			interrupts = <0x14>;
+			clocks = <0x3>;
+			clock-frequency = <0x2625a00>;
 			clock-names = "baudclk";
 			status = "okay";
 		};
-
-		xip_flash@58500000 {
-				compatible = "mtd-rom";
-				reg = <0x0 0x58500000 0x0 0x400000>;
-				linux,mtd-name = "xip-flash.0";
-				erase-size = <0x10000>;
-				bank-width = <4>;
-				#address-cells = <1>;
-				#size-cells = <1>;
-
-				/* param@0 {
-						label = "param";
-						reg = <0x00000 0x380000>;
-						read-only;
-				}; */
-
-				rootfs@0 {
-						label = "rootfs";
-						reg = <0x00000 0x280000>;
-						read-only;
-				};
+		
+		ipc@30005000 {
+			compatible = "bflb-ipc,ipc0";
+			reg = <0x0 0x30005000 0x0 0x1000>;
+			interrupt-parent = <0x2>;
+			interrupts = <0x36>;
+			status = "okay";
+		};
+		
+		shm@30005000 {
+			compatible = "bflb-shm,shm0";
+			reg = <0x0 0x30005000 0x0 0x1000>;
+			interrupt-parent = <0x2>;
+			interrupts = <0x36>;
+			status = "okay";
 		};
 
+		xip_flash@58580000 {
+			compatible = "mtd-rom";
+			reg = <0x0 0x58580000 0x0 0x400000>;
+			linux,mtd-name = "xip-flash.0";
+			erase-size = <0x10000>;
+			bank-width = <0x4>;
+			#address-cells = <0x1>;
+			#size-cells = <0x1>;
+
+		};
 	};
 
 	chosen {
-		/* bootargs = "console=ttyS0,2000000 loglevel=8 earlyprintk earlycon=sbi root=/dev/ram0 initrd=0x52000000"; */
-		bootargs = "console=ttyS0,2000000 loglevel=8 earlyprintk earlycon=sbi root=/dev/mtdblock0 ro rootfstype=squashfs";
-		linux,initrd-start = <0x0 0x52000000>;
-		linux,initrd-end = <0x0 0x52941784>;
+		bootargs = "console=ttyS0,2000000 loglevel=8 earlyprintk earlycon=sbi initrd=0x52000000,0x800000 root=/dev/ram0 rw rootwait rootfstype=ext2";
 		stdout-path = "/soc/serial@30002000:2000000";
 	};
 };

@@ -13,7 +13,7 @@ def gen_flash_bin():
     rootfs_base = 0x480000
     bootload_file = "../pre_build_bin/spl_bl808_d0.bin"
     dtb_file = "hw.dtb.5M"                  # 64k
-    opensbi_file = "../pre_build_bin/opensbi_v0.6.bin"       # 64k
+    opensbi_file = "fw_jump.bin" #"../pre_build_bin/opensbi_v0.6.bin" # 64k
     kernel_file = "Image.lz4"
 
     kernel_out_img_file = "./whole_img_d0.bin"

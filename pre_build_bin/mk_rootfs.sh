@@ -19,6 +19,10 @@ if [ ! -d rootfs/proc ]; then
 	mkdir rootfs/proc
 fi
 
+if [ ! -d rootfs/mnt/nfs ]; then
+	mkdir -p rootfs/mnt/nfs
+fi
+
 genext2fs -b 8192 -d rootfs ramdisk
 
 rm -f  ramdisk.lz4

@@ -24,7 +24,7 @@ build_linux()
     if [ ! -f .config ]; then
         cp c906.config .config
     fi
-    make ARCH=riscv CROSS_COMPILE=$LINUX_CROSS_PREFIX Image modules -j$(nproc)
+    make ARCH=riscv CROSS_COMPILE=$LINUX_CROSS_PREFIX Image modules dtbs -j$(nproc)
     make ARCH=riscv CROSS_COMPILE=$LINUX_CROSS_PREFIX modules_install INSTALL_MOD_PATH=$OUT_DIR/modules 
     echo " "
     echo "=========== high compression kernel image =========="

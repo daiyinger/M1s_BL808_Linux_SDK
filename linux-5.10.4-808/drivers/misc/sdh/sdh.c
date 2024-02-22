@@ -319,6 +319,8 @@ static ssize_t my_driver_read(struct file *filp, char *buffer, size_t length, lo
     copy_size = copy_to_user(buffer, (const void *)(mapped_addr + *offset), length);
 
     (void)copy_size;
+    printk("int enable %x\n", BL_RD_REG(SDH_BASE_ADDR, SDH_SD_NORMAL_INT_STATUS_INT_EN));
+    length = 0;
     //flush_icache_pte(mapped_addr/4096);
 
     *offset += length;  // 更新偏移量以供下一次读取使用  
@@ -1595,7 +1597,7 @@ SD_Error SDH_ReadMultiBlocks(uint8_t *readbuff, uint32_t ReadAddr, uint16_t Bloc
 			return SD_DATA_ERROR;
 	}
 	
-#if 0
+#if 1
 	SDH_ITConfig(SDH_INT_DATA_COMPLETED|SDH_INT_DATA_ERRORS|SDH_INT_DMA_ERROR|SDH_INT_AUTO_CMD12_ERROR,ENABLE);
 	
 	/*wait for Xfer status. might pending here in multi-task OS*/
@@ -1954,6 +1956,8 @@ SD_Error SDH_WriteMultiBlocks(uint8_t *writebuff, uint32_t WriteAddr, uint16_t B
 	SDH_DMA_Cfg_TypeInstance.maxEntries = sizeof(adma2Entries)/sizeof(adma2Entries[0]);
 	//printk("2.\n");	
 	
+	SDH_EnableIntSource(SDH_INT_DATA_COMPLETED);
+	
 	stat = SDH_TransferBlocking(/*&SDH_DMA_Cfg_TypeInstance*/NULL, &SDH_Trans_Cfg_TypeInstance);
 	
 	//printk("3.\n");	
@@ -1965,7 +1969,7 @@ SD_Error SDH_WriteMultiBlocks(uint8_t *writebuff, uint32_t WriteAddr, uint16_t B
 	}
 
 	
-#if 0
+#if 1
 	SDH_ITConfig(SDH_INT_DATA_COMPLETED|SDH_INT_DATA_ERRORS|SDH_INT_DMA_ERROR|SDH_INT_AUTO_CMD12_ERROR,ENABLE);
 	
 	/*wait for Xfer status. might pending here in multi-task OS*/
@@ -2246,6 +2250,7 @@ static int __init shm_driver_init(void) {
 		gSDCardInfo.blockSize);
 	printk("init ok\n");
     }
+    //SDH_EnableIntSource(SDH_INT_ALL);
 
     sdblkdev_init();
 

@@ -215,8 +215,8 @@ static struct class *my_class;
 #define BL_WR_SHORT(addr, val) ((*(volatile uint16_t *)(uintptr_t)(addr)) = (val))
 #define BL_WR_REG16(addr, regname, val)           BL_WR_SHORT(addr + regname##_OFFSET, val)
 
-void read_sd_block(unsigned long index);
-void write_sd_block(unsigned long index);
+void read_sd_block(unsigned int index);
+void write_sd_block(unsigned int index);
 
 /****************************************************************************/ /**
  * @brief  SDH enable interrupt
@@ -376,7 +376,7 @@ static ssize_t my_driver_write(struct file *filp, const char *buffer, size_t len
 	uint32_t index = str_to_int(buf);
     	if(index > 10000)
     	{
-	    index -= 10000;
+	    index = index-10000;
 	    write_sd_block(index);
     	}
    	read_sd_block(index);
@@ -1597,7 +1597,7 @@ SD_Error SDH_ReadMultiBlocks(uint8_t *readbuff, uint32_t ReadAddr, uint16_t Bloc
 			return SD_DATA_ERROR;
 	}
 	
-#if 1
+#if 0
 	SDH_ITConfig(SDH_INT_DATA_COMPLETED|SDH_INT_DATA_ERRORS|SDH_INT_DMA_ERROR|SDH_INT_AUTO_CMD12_ERROR,ENABLE);
 	
 	/*wait for Xfer status. might pending here in multi-task OS*/
@@ -1969,7 +1969,7 @@ SD_Error SDH_WriteMultiBlocks(uint8_t *writebuff, uint32_t WriteAddr, uint16_t B
 	}
 
 	
-#if 1
+#if 0
 	SDH_ITConfig(SDH_INT_DATA_COMPLETED|SDH_INT_DATA_ERRORS|SDH_INT_DMA_ERROR|SDH_INT_AUTO_CMD12_ERROR,ENABLE);
 	
 	/*wait for Xfer status. might pending here in multi-task OS*/
@@ -1998,7 +1998,7 @@ EXPORT_SYMBOL(SDH_WriteMultiBlocks);
 EXPORT_SYMBOL(SDH_ReadMultiBlocks);
 
 
-void read_sd_block(unsigned long index)
+void read_sd_block(unsigned int index)
 {
 	int ret;
 	int i;
@@ -2006,8 +2006,8 @@ void read_sd_block(unsigned long index)
 	char buf[1024] = {0};
 	static char str_buf[4096] = {0};
 	
-	printk("buf:%px rand:%ld", buf, index);
-	ret = SDH_ReadMultiBlocks(buf, index*512, 512, 1);
+	printk("buf:%px rand:%d", buf, index);
+	ret = SDH_ReadMultiBlocks(buf, index, 512, 1);
 	printk("ret %d\n", ret);
 
 
@@ -2036,15 +2036,15 @@ void read_sd_block(unsigned long index)
 	printk("%s\n", str_buf);
 }
 
-void write_sd_block(unsigned long index)
+void write_sd_block(unsigned int index)
 {
 	int i;
 	int ret;
 	char buf[1024] = {0};
 	for(i = 0; i < 512; i++)
 		buf[i] = i;
-	ret = SDH_WriteMultiBlocks(buf, index*512, 512, 1);
-	printk("ret=%d\n", ret);
+	ret = SDH_WriteMultiBlocks(buf, index, 512, 1);
+	printk("index :%d ret=%d\n", index, ret);
 }
 
 static int sd_block_major=0;
@@ -2064,40 +2064,37 @@ int write           :  是读还是写
 static void sd_block_dev_sector_read_write(unsigned long sector,unsigned long nsect, char *buffer, int write)
 {
 		/*块设备最小单位是一个扇区，一个扇区的字节数是512字节*/
-		unsigned long offset = sector;  /*写入数据的位置*/
-		unsigned long nbytes = nsect;   /*写入的长度*/
-		if((offset + nbytes)>gSDCardInfo.blockCount*512)
+		unsigned long offset = sector>>9;  /*写入数据的位置*/
+		unsigned long npages = nsect>>9;   /*写入的长度*/
+		
+		if((offset + npages) > gSDCardInfo.blockCount)
 		{
-			printk("Over(%ld %ld)\n", offset, nbytes);
+			printk("Over(%ld %ld)\n", offset, npages);
 			return;
 		}
 		if(write) /*为真,表示是写*/
 		{
-			//memcpy(sizeof_p + offset, buffer, nbytes);
-			
-			int page = nbytes>>9;
 			int i;
-			for(i = 0; i< page; i++)
+			for(i = 0; i< npages; i++)
 			{
 				SDH_WriteMultiBlocks(buffer+512*i, 
-					 offset+512*i, 512, 1);
+					 offset+i, 512, 1);
 			}
 		}
 		else      /*读操作*/
 		{
-			//memcpy(buffer,sizeof_p + offset, nbytes);
 #if 1
-			//printk("offset %ld nbytes:%ld page:%ld\n", offset>>9, nbytes, nbytes>>9);
-			int page = nbytes>>9;
 			int i;
-			for(i = 0; i< page; i++)
+			for(i = 0; i< npages; i++)
 			{
 				SDH_ReadMultiBlocks(buffer+512*i, 
-					 offset+512*i, 512, 1);
+					 offset+i, 512, 1);
 			}
 #else
-			SDH_ReadMultiBlocks(buffer,offset, 512, nbytes>>9);
+			SDH_ReadMultiBlocks(buffer, offset, 512, npages);
 #endif
+
+
 #if 0
 			char strbuf[1024] = {0};
 			for(i = 1; i <= nbytes; i++)
@@ -2111,6 +2108,7 @@ static void sd_block_dev_sector_read_write(unsigned long sector,unsigned long ns
 			}
 			printk("%s\n", strbuf);
 #endif
+
 		}
 }
 

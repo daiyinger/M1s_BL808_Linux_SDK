@@ -197,7 +197,7 @@ volatile void *ipc2_reg = NULL;
 volatile int ipi_cnt = 0;
 static dev_t first_dev;  
 static struct cdev my_cdev;  
-static struct class *my_class;  
+static struct class *my_class; 
 
 #define BL_WR_WORD(addr, val)  ((*(volatile uint32_t *)(uintptr_t)(addr)) = (val))
 #define BL_WR_REG(addr, regname, val)             BL_WR_WORD(addr + regname##_OFFSET, val)
@@ -211,6 +211,8 @@ static struct class *my_class;
 #define BL_WR_SHORT(addr, val) ((*(volatile uint16_t *)(uintptr_t)(addr)) = (val))
 #define BL_WR_REG16(addr, regname, val)           BL_WR_SHORT(addr + regname##_OFFSET, val)
 
+void read_sd_block(unsigned long index);
+void write_sd_block(unsigned long index);
 
 /****************************************************************************/ /**
  * @brief  SDH enable interrupt
@@ -318,10 +320,41 @@ static ssize_t my_driver_read(struct file *filp, char *buffer, size_t length, lo
     *offset += length;  // 更新偏移量以供下一次读取使用  
     return length;  // 返回实际读取的字节数  
 }  
-  
+
+
+uint32_t str_to_hex(const char *str)
+{
+	        uint32_t ret = 0;
+
+		        if((str[0]=='0') && ((str[1] == 'x') || (str[1] == 'X')))
+				        {
+						                if(strlen(str) > 10)
+									                        return ret;
+								                else
+											                        str += 2;
+										        }
+			        else if(strlen(str) > 8)
+					        {
+							                return ret;
+									        }
+
+
+				        sscanf(str, "%08x", &ret); //
+					        return ret;
+}
+
+uint32_t str_to_int(const char *str)
+{
+	uint32_t ret = 0;
+
+	sscanf(str, "%d", &ret); //
+	return ret;
+}
+
+
 static ssize_t my_driver_write(struct file *filp, const char *buffer, size_t length, loff_t * offset)  
 {  
-    char *buf[128];
+    char buf[128] = {0};
     size_t copy_size;
     if (*offset >= SIZE) {  
         return -EINVAL;  // 已到达文件末尾，无法写入更多数据  
@@ -331,8 +364,15 @@ static ssize_t my_driver_write(struct file *filp, const char *buffer, size_t len
     }  
 
 #if 1
-    copy_size = copy_from_user((void *)(mapped_addr + *offset), buffer, length);
+    copy_size = copy_from_user((void *)buf, buffer, length);
     (void)copy_size;
+    uint32_t index = str_to_int(buf);
+    if(index > 10000)
+    {
+	    index -= 10000;
+	    write_sd_block(index);
+    }
+    read_sd_block(index);
    
     //memcpy_toio(xram_addr, buf, length);
     //asm volatile("l2cache.ciall");
@@ -450,7 +490,7 @@ SDH_Stat_Type SDH_WaitCommandDone(SDH_CMD_Cfg_Type *cmd)
     while (!(intStatus & (SDH_INT_CMD_COMPLETED | SDH_INT_CMD_ERRORS | SDH_INT_TUNE_ERROR))) {
         intStatus = SDH_GetIntStatus();
 	count++;
-	if(count%2000000==0)
+	if(count%2000==0)
 		printk("intStatus:%x\r\n", intStatus);
     }
 
@@ -741,7 +781,7 @@ uint32_t SDH_ReadDataPort(SDH_Data_Cfg_Type *dataCfg)
     totalLen = (dataCfg->blockCount * dataCfg->blockSize);
     tmpVal = BL_RD_REG(SDH_BASE_ADDR, SDH_SD_TRANSFER_MODE);
 
-    printk("totalLen:%d\n", totalLen);
+    //printk("totalLen:%d\n", totalLen);
     if (!BL_IS_REG_BIT_SET(tmpVal, SDH_DMA_EN)) {
     	//printk("ok dataCfg->rxData:%px\n", dataCfg->rxData);
 	    do {
@@ -808,7 +848,7 @@ SDH_Stat_Type SDH_ReadDataPortBlock(SDH_Data_Cfg_Type *dataCfg)
     /* Clear data complete flag after the last read operation. */
     SDH_ClearIntStatus(SDH_INT_DATA_COMPLETED);
 
-    printk("end\n");
+    //printk("end\n");
     return error;
 
 }
@@ -855,10 +895,15 @@ SDH_Stat_Type SDH_WriteDataPortBlock(SDH_Data_Cfg_Type *dataCfg)
 
     totalLen = (dataCfg->blockCount * dataCfg->blockSize);
 
+    //printk("totalLen:%d\n", totalLen);
     while ((error == SDH_STAT_SUCCESS) && (txLen < totalLen)) {
-        while (!(intStatus & (SDH_INT_BUFFER_WRITE_READY | SDH_INT_DATA_ERRORS | SDH_INT_TUNE_ERROR))) {
-            intStatus = SDH_GetIntStatus();
-        }
+	int count = 0;
+        //while (!(intStatus & (SDH_INT_BUFFER_WRITE_READY | SDH_INT_DATA_ERRORS | SDH_INT_TUNE_ERROR))) {
+            //intStatus = SDH_GetIntStatus();
+	    while(count++<1000000);
+	    if(count%1000000 == 0)
+		    printk("intStatus:%x\n", intStatus);
+        //}
 
         if ((intStatus & SDH_INT_TUNE_ERROR) != 0U) {
             SDH_ClearIntStatus(SDH_INT_TUNE_ERROR);
@@ -919,6 +964,7 @@ SDH_Stat_Type SDH_TransferDataBlocking(SDH_Data_Cfg_Type *dataCfg, uint8_t enDMA
     SDH_Stat_Type stat = SDH_STAT_SUCCESS;
     uint32_t intStatus = 0U;
 
+    //printk("enDMA:%d\n", enDMA);
     if (enDMA) {
         /* Wait dataCfg complete or encounters error. */
         while (!(intStatus & (SDH_INT_DATA_COMPLETED | SDH_INT_DATA_ERRORS |
@@ -942,7 +988,8 @@ SDH_Stat_Type SDH_TransferDataBlocking(SDH_Data_Cfg_Type *dataCfg, uint8_t enDMA
         SDH_ClearIntStatus(SDH_INT_DATA_COMPLETED | SDH_INT_DATA_ERRORS |
                            SDH_INT_DMA_ERROR | SDH_INT_TUNE_ERROR);
     } else {
-	printk("dataCfg->rxData:%px", dataCfg->rxData);
+	if(dataCfg->rxData)
+		;//printk("dataCfg->rxData:%px", dataCfg->rxData);
         if (dataCfg->rxData) {
             stat = SDH_ReadDataPortBlock(dataCfg);
         } else {
@@ -1438,10 +1485,12 @@ SDH_Stat_Type SDH_TransferBlocking(SDH_DMA_Cfg_Type *dmaCfg, SDH_Trans_Cfg_Type 
 
     SDH_SendCommand(cmdCfg);
 
+    //printk("send cmd\n");
     /* Wait command done */
     if ((dataCfg == NULL) || (dataCfg->dataType == SDH_TRANS_DATA_NORMAL)) {
         stat = SDH_WaitCommandDone(cmdCfg);
     }
+    //printk("cmd ok stat%x\n", stat);
 
     /*
 	tmp = BL_RD_REG16(SDH_BASE,SDH_SD_ADMA_ERROR_STATUS);
@@ -1451,6 +1500,7 @@ SDH_Stat_Type SDH_TransferBlocking(SDH_DMA_Cfg_Type *dmaCfg, SDH_Trans_Cfg_Type 
 
     /* Wait for transferring data finish */
     if ((dataCfg != NULL) && (stat == SDH_STAT_SUCCESS)) {
+	//printk("in\n");
         stat = SDH_TransferDataBlocking(dataCfg, enDMA);
     }
 
@@ -1482,7 +1532,7 @@ SD_Error SDH_ReadMultiBlocks(uint8_t *readbuff, uint32_t ReadAddr, uint16_t Bloc
     		BlockSize = 512;
   	}	
 	
-	printk("Read-->IN, read %d blocks from %d with buffer 0x%p. \r\n",NumberOfBlocks,ReadAddr,readbuff);
+	//printk("Read-->IN, read %d blocks from %d with buffer 0x%p. \r\n",NumberOfBlocks,ReadAddr,readbuff);
 	
 	/*!< Set Block Size for SDSC Card,cmd16,no impact on SDHC card */
 	SDH_CMD_Cfg_TypeInstance.index = SD_CMD_SET_BLOCKLEN;
@@ -1493,7 +1543,7 @@ SD_Error SDH_ReadMultiBlocks(uint8_t *readbuff, uint32_t ReadAddr, uint16_t Bloc
 	
 	SDH_SendCommand(&SDH_CMD_Cfg_TypeInstance);	
 	stat = SDH_WaitCommandDone(&SDH_CMD_Cfg_TypeInstance);
-	printk("stat:%d response:%x\n", stat, SDH_CMD_Cfg_TypeInstance.response[0]);
+	//printk("stat:%d response:%x\n", stat, SDH_CMD_Cfg_TypeInstance.response[0]);
 	if(stat != SDH_STAT_SUCCESS){
 		return SD_CMD_ERROR;
 	}else if(SDH_CMD_Cfg_TypeInstance.response[0] & SD_CSR_ERRORBITS){
@@ -1548,12 +1598,12 @@ SD_Error SDH_ReadMultiBlocks(uint8_t *readbuff, uint32_t ReadAddr, uint16_t Bloc
 	
 	{
 		unsigned int count = 0;
-		while(count++ < 100000000);
+		while(count++ < 2000000);
 	}
 
 	SDH_ITConfig(SDH_INT_DATA_COMPLETED|SDH_INT_DATA_ERRORS|SDH_INT_DMA_ERROR|SDH_INT_AUTO_CMD12_ERROR,DISABLE);
 		
-	errorstatus = SDH_WaitStatus;
+	errorstatus = SDH_STAT_SUCCESS;//SDH_WaitStatus;
 	SDH_WaitStatus = SD_WAITING;
 	
 		
@@ -1844,8 +1894,150 @@ SD_Error SD_EnableWideBusOperation(SDH_Data_Bus_Width_Type WideMode)
 }
 
 
+SD_Error SDH_WriteMultiBlocks(uint8_t *writebuff, uint32_t WriteAddr, uint16_t BlockSize, uint32_t NumberOfBlocks)
+{
+  	SD_Error errorstatus = SD_OK;	
+	SDH_Stat_Type stat = SDH_STAT_SUCCESS;
+	if (CardType == SDIO_HIGH_CAPACITY_SD_CARD)//for sdhc block size is fixed to 512bytes 
+	{
+		BlockSize = 512;
+	}	
+	//printk("Write-->IN, write %d blocks to %d with buffer 0x%px. \r\n",NumberOfBlocks,WriteAddr,writebuff);
+	
+	/*!< Set Block Size for SDSC Card,cmd16,no impact on SDHC card */
+	SDH_CMD_Cfg_TypeInstance.index = SD_CMD_SET_BLOCKLEN;
+	SDH_CMD_Cfg_TypeInstance.argument = (uint32_t) BlockSize;
+	SDH_CMD_Cfg_TypeInstance.type = SDH_CMD_NORMAL;
+	SDH_CMD_Cfg_TypeInstance.respType = SDH_RESP_R1;
+	SDH_CMD_Cfg_TypeInstance.flag = SDH_TRANS_FLAG_NONE;
+	
+	SDH_SendCommand(&SDH_CMD_Cfg_TypeInstance);	
+	stat = SDH_WaitCommandDone(&SDH_CMD_Cfg_TypeInstance);
+	if(stat != SDH_STAT_SUCCESS){
+		return SD_CMD_ERROR;
+	}else if(SDH_CMD_Cfg_TypeInstance.response[0] & SD_CSR_ERRORBITS){
+		return SD_CMD_ERROR;
+	}
+	//printk("1.\n");	
+	
+	/*set cmd parameter for SD_CMD_WRITE_MULT_BLOCK*/
+	if(NumberOfBlocks<=1)
+		SDH_CMD_Cfg_TypeInstance.index = SD_CMD_WRITE_SINGLE_BLOCK;
+	else
+		SDH_CMD_Cfg_TypeInstance.index = SD_CMD_WRITE_MULT_BLOCK;
+	
+	SDH_CMD_Cfg_TypeInstance.argument =  (uint32_t)WriteAddr;
+	SDH_CMD_Cfg_TypeInstance.type = SDH_CMD_NORMAL;
+	SDH_CMD_Cfg_TypeInstance.respType = SDH_RESP_R1;
+	SDH_CMD_Cfg_TypeInstance.flag = SDH_TRANS_FLAG_DATA_PRESENT;	
+	/*set data parameter for WRITE_MULTIPLE_BLOCK*/
+	if(NumberOfBlocks<=1)
+		SDH_Data_Cfg_TypeInstance.enableAutoCommand12 = DISABLE;
+	else
+		SDH_Data_Cfg_TypeInstance.enableAutoCommand12 = ENABLE;
+	
+	SDH_Data_Cfg_TypeInstance.enableAutoCommand23 = DISABLE;
+	SDH_Data_Cfg_TypeInstance.enableIgnoreError = DISABLE;
+	SDH_Data_Cfg_TypeInstance.dataType = SDH_TRANS_DATA_NORMAL;
+	SDH_Data_Cfg_TypeInstance.blockSize = BlockSize;
+	SDH_Data_Cfg_TypeInstance.blockCount = NumberOfBlocks;
+	SDH_Data_Cfg_TypeInstance.rxDataLen = 0;
+	SDH_Data_Cfg_TypeInstance.rxData = NULL;
+	SDH_Data_Cfg_TypeInstance.txDataLen = 0;
+	SDH_Data_Cfg_TypeInstance.txData = (uint32_t *)writebuff;
+	/*set parameters for SDH_DMA_Cfg_TypeInstance*/
+	SDH_DMA_Cfg_TypeInstance.dmaMode = SDH_DMA_MODE_ADMA2;
+	SDH_DMA_Cfg_TypeInstance.burstSize = SDH_BURST_SIZE_128_BYTES;
+	SDH_DMA_Cfg_TypeInstance.fifoThreshold = SDH_FIFO_THRESHOLD_256_BYTES;
+	SDH_DMA_Cfg_TypeInstance.admaEntries = (uint32_t *)adma2Entries;
+	SDH_DMA_Cfg_TypeInstance.maxEntries = sizeof(adma2Entries)/sizeof(adma2Entries[0]);
+	//printk("2.\n");	
+	
+	stat = SDH_TransferBlocking(/*&SDH_DMA_Cfg_TypeInstance*/NULL, &SDH_Trans_Cfg_TypeInstance);
+	
+	//printk("3.\n");	
+	if(stat != SDH_STAT_SUCCESS){
+		if(stat == SDH_STAT_DMA_ADDR_NOT_ALIGN)
+			return SD_ADMA_ALIGN_ERROR;
+		else
+			return SD_DATA_ERROR;
+	}
+
+	
+	SDH_ITConfig(SDH_INT_DATA_COMPLETED|SDH_INT_DATA_ERRORS|SDH_INT_DMA_ERROR|SDH_INT_AUTO_CMD12_ERROR,ENABLE);
+	
+	/*wait for Xfer status. might pending here in multi-task OS*/
+	//while(SDH_WaitStatus == SD_WAITING){}
+	{
+		unsigned int count = 0;
+		while(count++ < 2000000);
+	}
+	
+		
+	SDH_ITConfig(SDH_INT_DATA_COMPLETED|SDH_INT_DATA_ERRORS|SDH_INT_DMA_ERROR|SDH_INT_AUTO_CMD12_ERROR,DISABLE);
+		
+	if(SDH_WaitStatus != SD_OK)
+	{
+		SDH_WaitStatus = SD_WAITING;
+		return SD_DATA_ERROR;
+	}
+	
+	SDH_WaitStatus = SD_WAITING;	
+	errorstatus = SDH_STAT_SUCCESS;//WaitInProgramming();
+	
+	//SDH_MSG("Write-->OUT, write %d blocks to %d with buffer 0x%p. \r\n",NumberOfBlocks,WriteAddr,writebuff);
+	return(errorstatus);		
+}
+EXPORT_SYMBOL(SDH_WriteMultiBlocks);
+EXPORT_SYMBOL(SDH_ReadMultiBlocks);
+
+
+
+void read_sd_block(unsigned long index)
+{
+	char buf[1024] = {0};
+	printk("buf:%px rand:%ld", buf, index);
+	int ret = SDH_ReadMultiBlocks(buf, index*512, 512, 1);
+	printk("ret %d\n", ret);
+	int i;
+	char str_buf[4096] = {0};
+
+	int zero_flag = 1;
+	for(i = 1; i <= 512; i++)
+	{
+		if(buf[i-1])
+		{
+			zero_flag = 0;
+			break;
+		}
+	}
+	if(!zero_flag)
+	{
+		for(i = 1; i <= 512; i++)
+		{
+			sprintf(str_buf+strlen(str_buf), "%02x ", buf[i-1]);
+			if(i%20==0)
+			{
+				printk("%s\n", str_buf);
+				str_buf[0] = 0;
+			}
+
+		}
+	}
+	printk("%s\n", str_buf);
+}
+
+void write_sd_block(unsigned long index)
+{
+	int i;
+	char buf[1024] = {0};
+	for(i = 0; i < 512; i++)
+		buf[i] = i;
+	int ret = SDH_WriteMultiBlocks(buf, index*512, 512, 1);
+	printk("ret=%d\n", ret);
+}
+
 static int __init shm_driver_init(void) {  
-    unsigned long index;
     int ret = 0;
 
     if(!mapped_addr)
@@ -1884,41 +2076,10 @@ static int __init shm_driver_init(void) {
 	printk("sdcard blockCount:%d blockSize:%d\r\n", gSDCardInfo.blockCount,
 		gSDCardInfo.blockSize);
 	char buf[1024]= {0};
-	get_random_bytes(&index, sizeof(unsigned long));
-	index=index%20;
-	printk("buf:%px rand:%ld", buf, index);
-	int ret = SDH_ReadMultiBlocks(buf, index*512, 512, 1);
-	printk("ret %d\n", ret);
-	int i;
-	char str_buf[4096] = {0};
-
-	int zero_flag = 1;
-	for(i = 1; i <= 512; i++)
-	{
-		if(buf[i-1])
-		{
-			zero_flag = 0;
-			break;
-		}
-	}
-	if(!zero_flag)
-	{
-		for(i = 1; i <= 512; i++)
-		{
-			sprintf(str_buf+strlen(str_buf), "%02x ", buf[i-1]);
-			if(i%20==0)
-			{
-				printk("%s\n", str_buf);
-				str_buf[0] = 0;
-			}
-
-		}
-	}
-	printk("%s\n", str_buf);
 	printk("init ok\n");
     }
 
-    return ret;
+    //return ret;
 
     ret = alloc_chrdev_region(&first_dev, 0, 1, DEVICE_NAME);  
     if (ret) {  
@@ -1941,8 +2102,13 @@ static int __init shm_driver_init(void) {
 }
 
 static void __exit shm_driver_exit(void) {
-    iounmap(mapped_addr); 
-    printk("iounmap\n"); 
+    	iounmap(mapped_addr); 
+	device_destroy(my_class, first_dev);
+	class_destroy(my_class);
+	unregister_chrdev_region(first_dev, 1);
+	cdev_del(&my_cdev);
+	//kfree(my_cdev);
+    	printk("iounmap\n"); 
 }
 
 module_init(shm_driver_init);

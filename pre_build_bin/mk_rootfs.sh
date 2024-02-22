@@ -23,6 +23,10 @@ if [ ! -d rootfs/mnt/nfs ]; then
 	mkdir -p rootfs/mnt/nfs
 fi
 
+if [ ! -d rootfs/mnt/sd ]; then
+	mkdir -p rootfs/mnt/sd
+fi
+
 genext2fs -b 8192 -d rootfs ramdisk
 
 rm -f  ramdisk.lz4

@@ -10,7 +10,7 @@ def create_flash_default_data(length):
     return datas
 
 def gen_flash_bin():
-    rootfs_base = 0x480000
+    rootfs_base = 0x500000
     bootload_file = "../pre_build_bin/spl_bl808_d0.bin"
     dtb_file = "hw.dtb.5M"                  # 64k
     opensbi_file = "fw_jump.bin" #"../pre_build_bin/opensbi_v0.6.bin" # 64k

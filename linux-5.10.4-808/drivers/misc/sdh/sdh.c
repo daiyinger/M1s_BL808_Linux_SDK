@@ -10,6 +10,10 @@
 #include <linux/interrupt.h> 
 #include <linux/irqdomain.h>
 #include <linux/random.h>
+#include <linux/blkdev.h> 
+#include <linux/hdreg.h> 
+#include <linux/version.h>
+#include <linux/vmalloc.h>
 
 //#include "core_rv64.h"
 #include "ipc_reg.h"
@@ -2039,6 +2043,163 @@ void write_sd_block(unsigned long index)
 	printk("ret=%d\n", ret);
 }
 
+static int sd_block_major=0;
+static struct request_queue *sdblkdev_queue; 
+static struct gendisk *sdblkdev_disk;
+
+
+/*
+* Handle an I/O request.
+* 实现扇区的读写
+
+unsigned long sector:  当前扇区位置
+unsigned long nsect :  扇区读写数量
+char *buffer        :  读写的缓冲区指针
+int write           :  是读还是写
+*/
+static void sd_block_dev_sector_read_write(unsigned long sector,unsigned long nsect, char *buffer, int write)
+{
+		/*块设备最小单位是一个扇区，一个扇区的字节数是512字节*/
+		unsigned long offset = sector;  /*写入数据的位置*/
+		unsigned long nbytes = nsect;   /*写入的长度*/
+		if((offset + nbytes)>gSDCardInfo.blockCount*512)
+		{
+			printk("Over(%ld %ld)\n", offset, nbytes);
+			return;
+		}
+		if(write) /*为真,表示是写*/
+		{
+			//memcpy(sizeof_p + offset, buffer, nbytes);
+			
+			int page = nbytes>>9;
+			int i;
+			for(i = 0; i< page; i++)
+			{
+				SDH_WriteMultiBlocks(buffer+512*i, 
+					 offset+512*i, 512, 1);
+			}
+		}
+		else      /*读操作*/
+		{
+			//memcpy(buffer,sizeof_p + offset, nbytes);
+#if 1
+			//printk("offset %ld nbytes:%ld page:%ld\n", offset>>9, nbytes, nbytes>>9);
+			int page = nbytes>>9;
+			int i;
+			for(i = 0; i< page; i++)
+			{
+				SDH_ReadMultiBlocks(buffer+512*i, 
+					 offset+512*i, 512, 1);
+			}
+#else
+			SDH_ReadMultiBlocks(buffer,offset, 512, nbytes>>9);
+#endif
+#if 0
+			char strbuf[1024] = {0};
+			for(i = 1; i <= nbytes; i++)
+			{
+				sprintf(strbuf+strlen(strbuf), "%02x ", buffer[i-1]);
+				if(i%20==0)
+				{
+					printk("%s\n", strbuf);
+					strbuf[0] = 0;
+				}
+			}
+			printk("%s\n", strbuf);
+#endif
+		}
+}
+
+/*
+处理请求
+*/
+static blk_qc_t sdblkdev_make_request(/*struct request_queue *q, */struct bio *bio) 
+{ 
+	int dir; 
+	unsigned long long dsk_offset; 
+	struct bio_vec bvec;
+       	struct bvec_iter iter;	
+	void *iovec_mem;
+	
+	/*判断读写方向*/
+	if(bio_data_dir(bio) == WRITE) 
+		dir = 1;
+	else 
+		dir = 0;
+	dsk_offset = bio->bi_iter.bi_sector << 9;
+	bio_for_each_segment(bvec, bio, iter) 
+	{ 
+		iovec_mem = kmap(bvec.bv_page) + bvec.bv_offset; 
+
+		//printk("iovec_mem:%px dir:%d dsk_offset:%lld\n", iovec_mem, 
+		//		dir, dsk_offset);
+		
+		//起始位置,长度,源数据,方向
+		sd_block_dev_sector_read_write(dsk_offset,bvec.bv_len,iovec_mem,dir);
+		
+		kunmap(bvec.bv_page);
+		dsk_offset += bvec.bv_len; 
+	}
+	bio_endio(bio);
+        return BLK_QC_T_NONE;	
+}
+
+
+struct block_device_operations sdblkdev_fops = 
+{ 
+    .owner= THIS_MODULE,
+    .submit_bio	= sdblkdev_make_request, 
+};
+static int sdblkdev_init(void) 
+{ 
+	/*动态分配请求队列*/
+	sdblkdev_queue = blk_alloc_queue(GFP_KERNEL);
+	
+	
+	/*动态分配次设备号结构*/
+	/*每一个磁盘(分区)都是使用一个gendisk结构保存*/
+	sdblkdev_disk = alloc_disk(64); 
+	
+	/*磁盘名称赋值*/
+	strcpy(sdblkdev_disk->disk_name, "sdblkdev"); 
+
+	/*注册一个块设备,自动分配主设备号*/
+	sd_block_major = register_blkdev(0,"sd_block");
+	printk("sd_block_major=%d\n",sd_block_major);
+	
+	sdblkdev_disk->major=sd_block_major; 	  /*主设备号*/
+	sdblkdev_disk->first_minor = 0; 				  /*次设备号*/
+	sdblkdev_disk->fops = &sdblkdev_fops;   /*文件操作结合*/
+	sdblkdev_disk->queue = sdblkdev_queue;  /*处理数据请求的队列*/
+	
+	/*设置磁盘结构 capacity 的容量*/
+	/*注意: 块设备的大小使用扇区作为单位设置，而扇区的大小默认是512字节。
+	  cat /sys/block/xxxx/size 可以查看到设置的大小
+	  把字节为单位的大小转换为以扇区为单位时，我们需要除以512，或者右移9位
+	*/
+	set_capacity(sdblkdev_disk, gSDCardInfo.blockCount);//TINY4412_BLK_DEV_BYTES>>9); //122507264
+	
+	//添加磁盘信息到内核
+	add_disk(sdblkdev_disk);
+	return 0;
+}
+
+static void  sdblkdev_deinit(void) 
+{ 
+	//删除磁盘
+	del_gendisk(sdblkdev_disk);
+	
+	put_disk(sdblkdev_disk); 
+	
+	//清除队列
+	blk_cleanup_queue(sdblkdev_queue);
+	
+	/*注销块设备*/
+	unregister_blkdev(sd_block_major, "sd_block");
+	
+}
+
+
 static int __init shm_driver_init(void) {  
     int ret = 0;
 
@@ -2086,6 +2247,8 @@ static int __init shm_driver_init(void) {
 	printk("init ok\n");
     }
 
+    sdblkdev_init();
+
     //return ret;
 
     ret = alloc_chrdev_region(&first_dev, 0, 1, DEVICE_NAME);  
@@ -2109,6 +2272,7 @@ static int __init shm_driver_init(void) {
 }
 
 static void __exit shm_driver_exit(void) {
+	sdblkdev_deinit();
     	iounmap(mapped_addr); 
 	device_destroy(my_class, first_dev);
 	class_destroy(my_class);

@@ -1340,8 +1340,7 @@ SDH_Stat_Type SDH_CreateADMA2Descriptor(SDH_ADMA2_Desc_Type *adma2Entries, uint3
 
         /* Each descriptor for ADMA2 is 64-bit in length */
         adma2Entries[i].address = (dataLen == 0U) ? (uint32_t)(uintptr_t)&bootDummy : (uint32_t)(uintptr_t)data;
-        adma2Entries[i].address = 0x3F001000;
-		//virt_to_phys((volatile void *)(adma2Entries[i].address));
+        adma2Entries[i].address = virt_to_phys((volatile void *)(adma2Entries[i].address));
 	//printk("0x%px adma2Entries[i].address:%px\n", data, adma2Entries[i].address);
 	adma2Entries[i].attribute = (dmaBufferLen << SDH_ADMA2_DESCRIPTOR_LENGTH_POS);
         adma2Entries[i].attribute |= (dataLen == 0U) ? 0U : (SDH_ADMA2_DESC_FLAG_TRANSFER);
@@ -1641,6 +1640,44 @@ inline void csi_l2cache_invalid(void)
 
 }
 
+#define _RT_STRINGIFY(x...)     #x
+#define RT_STRINGIFY(x...) _RT_STRINGIFY(x)
+#define __OPC_INSN_FORMAT_R(opcode, func3, func7, rd, rs1, rs2) \
+	    ".insn r "RT_STRINGIFY(opcode)","RT_STRINGIFY(func3)","RT_STRINGIFY(func7)","RT_STRINGIFY(rd)","RT_STRINGIFY(rs1)","RT_STRINGIFY(rs2)
+
+#define __OPC_INSN_FORMAT_CACHE(func7, rs2, rs1) \
+	    __OPC_INSN_FORMAT_R(0x0b, 0x0, func7, x0, rs1, rs2)
+
+#define OPC_DCACHE_IVA(rs1)     __OPC_INSN_FORMAT_CACHE(0x1, x6, rs1)
+
+#define CACHE_OP_RS1 %0
+
+#define CACHE_OP_RANGE(instr)                                  \
+	{                                                          \
+	register uint64_t i = start & ~(L1_CACHE_BYTES - 1); \
+	for (; i < end; i += L1_CACHE_BYTES)                   \
+	{                                                      \
+	__asm__ volatile(instr ::"r"(i)                    \
+	: "memory");                      \
+	}                                                      \
+	}
+
+void dcache_inv_range(unsigned long start, unsigned long end)
+{
+    CACHE_OP_RANGE(OPC_DCACHE_IVA(CACHE_OP_RS1));
+}
+
+#define OPC_SYNC                ".long 0x0180000B"
+#define hw_cpu_sync() __asm__ volatile(OPC_SYNC:: \
+		                                              : "memory")
+
+void cpu_dcache_invalidate_local(void *addr, int size)
+{
+	dcache_inv_range((unsigned long)addr, 
+			(unsigned long)((unsigned char *)addr + size));
+	hw_cpu_sync();
+}
+
 /****************************************************************************/ /**
  * @brief  SDH transfer data in blocking way
  *
@@ -1931,6 +1968,7 @@ SD_Error SDH_ReadMultiBlocks(uint8_t *readbuff, uint32_t ReadAddr, uint16_t Bloc
 			SDH_ClearIntStatus(intFlag);
 			break;
 		}
+		schedule();
 		wait_count++;
 		if(wait_count > 10000000)
 			break;
@@ -1946,6 +1984,8 @@ SD_Error SDH_ReadMultiBlocks(uint8_t *readbuff, uint32_t ReadAddr, uint16_t Bloc
 	//msleep(1);
 	SDH_ITConfig(SDH_INT_DATA_COMPLETED|SDH_INT_DATA_ERRORS|SDH_INT_DMA_ERROR|SDH_INT_AUTO_CMD12_ERROR,DISABLE);	
 
+	cpu_dcache_invalidate_local(readbuff, ALIGN(BlockSize*NumberOfBlocks,4));
+	
 	errorstatus = SDH_STAT_SUCCESS;//SDH_WaitStatus;
 	SDH_WaitStatus = SD_WAITING;
 #endif
@@ -2334,6 +2374,8 @@ SD_Error SDH_WriteMultiBlocks(uint8_t *writebuff, uint32_t WriteAddr, uint16_t B
 EXPORT_SYMBOL(SDH_WriteMultiBlocks);
 EXPORT_SYMBOL(SDH_ReadMultiBlocks);
 
+
+
 void read_sd_block_demo(void)
 {
 	int ret;
@@ -2341,26 +2383,33 @@ void read_sd_block_demo(void)
 	int zero_flag = 1;
 	unsigned int index = 0;
 	static char buf1[1024] = {0};
+	static char buf2[1024];
 	static char *buf = NULL;
 	static char str_buf[4096] = {0};
 	
 	//if(!buf)
 	{
-		//buf = kmalloc(4096, ZONE_NORMAL);
+		buf = kmalloc(4096, ZONE_DMA32);
 
-		buf = ioremap(0x3F001000, 4096);
+		//buf = ioremap(0x3F001000, 4096);
+		//buf = memremap(virt_to_phys(buf), 4096, MEMREMAP_WC);
 	}
 	while(index < 5000)
 	{
 
 		//printk("buf:%px %lx rand:%d", buf, virt_to_phys(buf), index);
 		ret = SDH_ReadMultiBlocks(buf, index, 512, 1);
-		//printk("ret %d\n", ret);
+		if(ret)
+			printk("ret %d\n", ret);
 
 		ret = SDH_ReadMultiBlocksNonBlock(buf1, index, 512, 1);
-		//printk("ret %d\n", ret);
+		if(ret)
+			printk("ret %d\n", ret);
 
-		//csi_dcache_clean_range(buf, 1024);
+		//csi_l2cache_invalid();	
+		//csi_l2cache_clean_invalid();
+		//csi_dcache_invalid_range(buf, 1024);
+		//memcpy_fromio(buf2, buf, 512);
 		if(memcmp(buf, buf1, 512))
 		{
 			printk("%d no ok\n", index);
@@ -2404,7 +2453,7 @@ void read_sd_block_demo(void)
 		}
 	}
 	printk("%s\n", str_buf);
-	iounmap(buf);
+	//iounmap(buf);
 }
 
 void read_sd_block(unsigned int index)

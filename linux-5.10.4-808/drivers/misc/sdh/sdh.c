@@ -1901,6 +1901,8 @@ SD_Error SD_EnableWideBusOperation(SDH_Data_Bus_Width_Type WideMode)
 
 SD_Error SDH_WriteMultiBlocks(uint8_t *writebuff, uint32_t WriteAddr, uint16_t BlockSize, uint32_t NumberOfBlocks)
 {
+	uint64_t wait_count = 0;
+	static uint64_t wait_count_max = 0;
   	SD_Error errorstatus = SD_OK;	
 	SDH_Stat_Type stat = SDH_STAT_SUCCESS;
 	if (CardType == SDIO_HIGH_CAPACITY_SD_CARD)//for sdhc block size is fixed to 512bytes 
@@ -1958,8 +1960,8 @@ SD_Error SDH_WriteMultiBlocks(uint8_t *writebuff, uint32_t WriteAddr, uint16_t B
 	SDH_DMA_Cfg_TypeInstance.maxEntries = ADMA2ENTRIES_SIZE;
 	//printk("2.\n");	
 	
-	SDH_EnableIntSource(SDH_INT_DATA_COMPLETED);
-	
+	//SDH_EnableIntSource(SDH_INT_DATA_COMPLETED);
+#if 0	
 	stat = SDH_TransferBlocking(/*&SDH_DMA_Cfg_TypeInstance*/NULL, &SDH_Trans_Cfg_TypeInstance);
 	
 	//printk("3.\n");	
@@ -1992,7 +1994,50 @@ SD_Error SDH_WriteMultiBlocks(uint8_t *writebuff, uint32_t WriteAddr, uint16_t B
 	
 	SDH_WaitStatus = SD_WAITING;	
 	errorstatus = SDH_STAT_SUCCESS;//WaitInProgramming();
+#else
+	//csi_dcache_clean_range(writebuff, 
+	//		ALIGN(BlockSize*NumberOfBlocks,4));
+	cpu_dcache_clean_local(writebuff,
+			ALIGN(BlockSize*NumberOfBlocks,4));
+
+	stat = SDH_TransferNonBlocking(&SDH_DMA_Cfg_TypeInstance, &SDH_Trans_Cfg_TypeInstance);
 	
+	//printk("3.\n");	
+	if(stat != SDH_STAT_SUCCESS){
+		if(stat == SDH_STAT_DMA_ADDR_NOT_ALIGN)
+			return SD_ADMA_ALIGN_ERROR;
+		else
+			return SD_DATA_ERROR;
+	}
+	while(1)
+	{
+		uint32_t intFlag;
+		intFlag = SDH_GetIntStatus();
+		if (intFlag & SDH_INT_DATA_COMPLETED)
+		{
+			//printk("int flag:%x\n", intFlag);
+			SDH_ClearIntStatus(intFlag);
+			break;
+		}
+		schedule();
+		wait_count++;
+		if(wait_count > 10000000)
+			break;
+	}
+	if(wait_count > wait_count_max)
+	{
+		wait_count_max = wait_count;
+		printk("write wait_count_max:%lld\n", wait_count_max);
+	}
+	
+	//msleep(1);
+	SDH_ITConfig(SDH_INT_DATA_COMPLETED|SDH_INT_DATA_ERRORS|SDH_INT_DMA_ERROR|SDH_INT_AUTO_CMD12_ERROR,DISABLE);	
+
+	
+	errorstatus = SDH_STAT_SUCCESS;//SDH_WaitStatus;
+	SDH_WaitStatus = SD_WAITING;
+	
+#endif	
 	return(errorstatus);		
 }
 
@@ -2073,7 +2118,7 @@ void read_sd_block(unsigned int index)
 		buf = kmalloc(4096, ZONE_NORMAL);
 
 	printk("buf:%px rand:%d", buf, index);
-	ret = SDH_ReadMultiBlocks(buf, index, 512, 1);
+	ret = SDH_ReadMultiBlocks(buf, index, 512, 2);
 	printk("ret %d\n", ret);
 
 
@@ -2088,7 +2133,7 @@ void read_sd_block(unsigned int index)
 	}
 	if(!zero_flag)
 	{
-		for(i = 1; i <= 512; i++)
+		for(i = 1; i <= 1024; i++)
 		{
 			sprintf(str_buf+strlen(str_buf), "%02x ", buf[i-1]);
 			if(i%20==0)
@@ -2106,10 +2151,15 @@ void write_sd_block(unsigned int index)
 {
 	int i;
 	int ret;
-	char buf[1024] = {0};
-	for(i = 0; i < 512; i++)
+	//char buf[1024] = {0};
+	static char *buf = NULL;
+	if(!buf)
+		buf = kmalloc(4096, ZONE_NORMAL);
+	for(i = 0; i < 1024; i++)
 		buf[i] = i;
 	ret = SDH_WriteMultiBlocks(buf, index, 512, 1);
+	printk("index :%d ret=%d\n", index, ret);
+	ret = SDH_WriteMultiBlocks(buf+512, index+1, 512, 1);
 	printk("index :%d ret=%d\n", index, ret);
 }
 
@@ -2149,7 +2199,7 @@ static void sd_block_dev_sector_read_write(unsigned long sector,unsigned long ns
 		}
 		else      /*读操作*/
 		{
-#if 1
+#if 0
 			int i;
 			for(i = 0; i< npages; i++)
 			{

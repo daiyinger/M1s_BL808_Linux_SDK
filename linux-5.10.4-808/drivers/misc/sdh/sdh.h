@@ -146,6 +146,7 @@ inline void csi_l2cache_invalid(void)
 	    __OPC_INSN_FORMAT_R(0x0b, 0x0, func7, x0, rs1, rs2)
 
 #define OPC_DCACHE_IVA(rs1)     __OPC_INSN_FORMAT_CACHE(0x1, x6, rs1)
+#define OPC_DCACHE_CVA(rs1)     __OPC_INSN_FORMAT_CACHE(0x1, x4, rs1)
 
 #define CACHE_OP_RS1 %0
 
@@ -159,19 +160,30 @@ inline void csi_l2cache_invalid(void)
 	}                                                      \
 	}
 
-void dcache_inv_range(unsigned long start, unsigned long end)
+inline void dcache_inv_range(unsigned long start, unsigned long end)
 {
     CACHE_OP_RANGE(OPC_DCACHE_IVA(CACHE_OP_RS1));
+}
+
+inline void dcache_wb_range(unsigned long start, unsigned long end)
+{
+    CACHE_OP_RANGE(OPC_DCACHE_CVA(CACHE_OP_RS1));
 }
 
 #define OPC_SYNC                ".long 0x0180000B"
 #define hw_cpu_sync() __asm__ volatile(OPC_SYNC:: \
 		                                              : "memory")
 
-void cpu_dcache_invalidate_local(void *addr, int size)
+inline void cpu_dcache_invalidate_local(void *addr, int size)
 {
 	dcache_inv_range((unsigned long)addr, 
 			(unsigned long)((unsigned char *)addr + size));
+	hw_cpu_sync();
+}
+
+inline void cpu_dcache_clean_local(void *addr, int size)
+{
+	dcache_wb_range((unsigned long)addr, (unsigned long)((unsigned char *)addr + size));
 	hw_cpu_sync();
 }
 

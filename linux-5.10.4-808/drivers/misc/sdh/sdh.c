@@ -1906,8 +1906,8 @@ SD_Error SDH_ReadMultiBlocks(uint8_t *readbuff, uint32_t ReadAddr, uint16_t Bloc
 	SDH_WaitStatus = SD_WAITING;
 #else
 
-	csi_l2cache_invalid();
-	csi_dcache_invalid_range(readbuff, BlockSize*NumberOfBlocks);
+	//csi_l2cache_invalid();
+	//csi_dcache_invalid_range(readbuff, BlockSize*NumberOfBlocks);
 	stat = SDH_TransferNonBlocking(&SDH_DMA_Cfg_TypeInstance, &SDH_Trans_Cfg_TypeInstance);
 	
 	if(stat != SDH_STAT_SUCCESS){
@@ -1941,9 +1941,9 @@ SD_Error SDH_ReadMultiBlocks(uint8_t *readbuff, uint32_t ReadAddr, uint16_t Bloc
 		printk("wait_count_max:%lld\n", wait_count_max);
 	}
 	//csi_dcache_invalid_range(readbuff, BlockSize*NumberOfBlocks);
-	csi_dcache_invalid_range(readbuff, BlockSize*NumberOfBlocks);
+	//csi_dcache_invalid_range(readbuff, BlockSize*NumberOfBlocks);
 	
-	msleep(1);
+	//msleep(1);
 	SDH_ITConfig(SDH_INT_DATA_COMPLETED|SDH_INT_DATA_ERRORS|SDH_INT_DMA_ERROR|SDH_INT_AUTO_CMD12_ERROR,DISABLE);	
 
 	errorstatus = SDH_STAT_SUCCESS;//SDH_WaitStatus;
@@ -2350,7 +2350,7 @@ void read_sd_block_demo(void)
 
 		buf = ioremap(0x3F001000, 4096);
 	}
-	while(index < 50000)
+	while(index < 5000)
 	{
 
 		//printk("buf:%px %lx rand:%d", buf, virt_to_phys(buf), index);
@@ -2360,17 +2360,19 @@ void read_sd_block_demo(void)
 		ret = SDH_ReadMultiBlocksNonBlock(buf1, index, 512, 1);
 		//printk("ret %d\n", ret);
 
-		csi_dcache_clean_range(buf, 1024);
+		//csi_dcache_clean_range(buf, 1024);
 		if(memcmp(buf, buf1, 512))
 		{
 			printk("%d no ok\n", index);
 			break;
 		}
 		if(index%100 == 0)
+		{
 			printk("index:%d\n", index);
+			msleep(1);
+		}
 
 		index++;
-		msleep(1);
 	}
 
 	str_buf[0] = 0;
@@ -2627,10 +2629,10 @@ static int __init shm_driver_init(void) {
 	    return -ENOMEM;  
     }
 
-    //adma2Entries = kmalloc(1024, ZONE_DMA32); //ADMA2ENTRIES_SIZE
-    //adma2EntriesPhy = (void *)virt_to_phys(adma2Entries);
-    adma2EntriesPhy = (void*)0x3F000000;
-    adma2Entries = ioremap((phys_addr_t)adma2EntriesPhy, 1024);
+    adma2Entries = kmalloc(1024, ZONE_DMA32); //ADMA2ENTRIES_SIZE
+    adma2EntriesPhy = (void *)virt_to_phys(adma2Entries);
+    //adma2EntriesPhy = (void*)0x3F000000;
+    //adma2Entries = ioremap((phys_addr_t)adma2EntriesPhy, 1024);
     printk("0x%px mapped_addr 0x%px size:%ld\n", 
 		    adma2EntriesPhy, adma2Entries, ADMA2ENTRIES_SIZE); 
 
@@ -2694,7 +2696,7 @@ static int __init shm_driver_init(void) {
 static void __exit shm_driver_exit(void) {
 	sdblkdev_deinit();
     	iounmap(mapped_addr); 
-	iounmap((phys_addr_t)adma2EntriesPhy);
+	//iounmap((phys_addr_t)adma2EntriesPhy);
 	device_destroy(my_class, first_dev);
 	class_destroy(my_class);
 	unregister_chrdev_region(first_dev, 1);

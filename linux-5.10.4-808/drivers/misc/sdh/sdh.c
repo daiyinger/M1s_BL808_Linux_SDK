@@ -14,6 +14,7 @@
 #include <linux/hdreg.h> 
 #include <linux/version.h>
 #include <linux/vmalloc.h>
+#include <linux/delay.h>
 
 //#include "core_rv64.h"
 #include "ipc_reg.h"
@@ -217,6 +218,7 @@ static struct class *my_class;
 
 void read_sd_block(unsigned int index);
 void write_sd_block(unsigned int index);
+void read_sd_block_demo(void);
 
 /****************************************************************************/ /**
  * @brief  SDH enable interrupt
@@ -321,6 +323,7 @@ static ssize_t my_driver_read(struct file *filp, char *buffer, size_t length, lo
     (void)copy_size;
     printk("int enable %x\n", BL_RD_REG(SDH_BASE_ADDR, SDH_SD_NORMAL_INT_STATUS_INT_EN));
     length = 0;
+    read_sd_block_demo();
     //flush_icache_pte(mapped_addr/4096);
 
     *offset += length;  // 更新偏移量以供下一次读取使用  
@@ -374,9 +377,9 @@ static ssize_t my_driver_write(struct file *filp, const char *buffer, size_t len
     (void)copy_size;
     {
 	uint32_t index = str_to_int(buf);
-    	if(index > 10000)
+    	if(index > 100000)
     	{
-	    index = index-10000;
+	    index = index-100000;
 	    write_sd_block(index);
     	}
    	read_sd_block(index);
@@ -467,6 +470,7 @@ void SDH_SendCommand(SDH_CMD_Cfg_Type *cmd)
         tmpVal = BL_SET_REG_BITS_VAL(tmpVal, SDH_CMD_TYPE, cmd->type);
         tmpVal = BL_SET_REG_BITS_VAL(tmpVal, SDH_CMD_INDEX, cmd->index);
 
+	//printk("cmd->argument:%px\n", cmd->argument);
         /* Config command argument */
         BL_WR_REG(SDH_BASE_ADDR, SDH_SD_ARG_LOW, cmd->argument);
 
@@ -523,7 +527,13 @@ static SDH_CMD_Cfg_Type             SDH_CMD_Cfg_TypeInstance;
 static SDH_Data_Cfg_Type            SDH_Data_Cfg_TypeInstance;
 static SDH_Trans_Cfg_Type           SDH_Trans_Cfg_TypeInstance={&SDH_Data_Cfg_TypeInstance,&SDH_CMD_Cfg_TypeInstance};
 static SDH_DMA_Cfg_Type   SDH_DMA_Cfg_TypeInstance;
-static SDH_ADMA2_Desc_Type adma2Entries[16];
+
+//static SDH_ADMA2_Desc_Type adma2Entries[16];
+//#define ALIGN(x, align) ((x + align -1) & ~(align -1))
+#define ADMA2ENTRIES_SIZE ALIGN((16*sizeof(SDH_ADMA2_Desc_Type)),32)
+static SDH_ADMA2_Desc_Type *adma2Entries = NULL;
+static SDH_ADMA2_Desc_Type *adma2EntriesPhy = NULL;
+#define ADMA_PHY_ADDR(x) ((uint64_t)adma2EntriesPhy)
 
 /* Private variables ---------------------------------------------------------*/
 static uint32_t CardType =  SDIO_STD_CAPACITY_SD_CARD_V2_0;
@@ -1138,6 +1148,8 @@ SDH_Stat_Type SDH_SetInternalDmaConfig(SDH_DMA_Cfg_Type *dmaCfg, const uint32_t 
             return SDH_STAT_DMA_ADDR_NOT_ALIGN;
         }
 
+	printk("data 0x%px\n", data);
+
         /* In simple DMA mode if use auto CMD23, address should load to ADMA addr,
 		     and block count should load to DS_ADDR*/
         if (enAutoCmd23) {
@@ -1147,8 +1159,11 @@ SDH_Stat_Type SDH_SetInternalDmaConfig(SDH_DMA_Cfg_Type *dmaCfg, const uint32_t 
         }
     } else {
         /* When use ADMA, disable simple DMA */
+	uint64_t addr = ADMA_PHY_ADDR((dmaCfg->admaEntries));
+	//printk("ADMA_PHY_ADDR:%px\n", addr);
         BL_WR_REG(SDH_BASE_ADDR, SDH_SD_SYS_ADDR_LOW, (uint32_t)0);
-        BL_WR_REG(SDH_BASE_ADDR, SDH_SD_ADMA_SYS_ADDR_1, (uintptr_t)(dmaCfg->admaEntries));
+        BL_WR_REG(SDH_BASE_ADDR, SDH_SD_ADMA_SYS_ADDR_1, 
+			(uintptr_t)addr);
     }
 
     /* Select DMA mode and config the burst length */
@@ -1275,6 +1290,8 @@ SDH_Stat_Type SDH_CreateADMA2Descriptor(SDH_ADMA2_Desc_Type *adma2Entries, uint3
 {
     uint32_t miniEntries, startEntries = 0U;
     uint32_t i, dmaBufferLen = 0U;
+    
+    //adma2Entries = ADMA_PHY_ADDR(adma2Entries);
 
     if (((uintptr_t)data % SDH_ADMA2_ADDRESS_ALIGN) != 0U) {
         return SDH_STAT_DMA_ADDR_NOT_ALIGN;
@@ -1323,7 +1340,10 @@ SDH_Stat_Type SDH_CreateADMA2Descriptor(SDH_ADMA2_Desc_Type *adma2Entries, uint3
 
         /* Each descriptor for ADMA2 is 64-bit in length */
         adma2Entries[i].address = (dataLen == 0U) ? (uint32_t)(uintptr_t)&bootDummy : (uint32_t)(uintptr_t)data;
-        adma2Entries[i].attribute = (dmaBufferLen << SDH_ADMA2_DESCRIPTOR_LENGTH_POS);
+        adma2Entries[i].address = 0x3F001000;
+		//virt_to_phys((volatile void *)(adma2Entries[i].address));
+	//printk("0x%px adma2Entries[i].address:%px\n", data, adma2Entries[i].address);
+	adma2Entries[i].attribute = (dmaBufferLen << SDH_ADMA2_DESCRIPTOR_LENGTH_POS);
         adma2Entries[i].attribute |= (dataLen == 0U) ? 0U : (SDH_ADMA2_DESC_FLAG_TRANSFER);
         // (dataLen == 0U) ? 0U : (SDH_ADMA2_DESC_FLAG_TRANSFER | SDH_ADMA2_DESC_FLAG_INT);
         /* TODO:align */
@@ -1514,6 +1534,174 @@ SDH_Stat_Type SDH_TransferBlocking(SDH_DMA_Cfg_Type *dmaCfg, SDH_Trans_Cfg_Type 
 }
 
 
+inline void __DCACHE_IPA(uint64_t addr)
+{
+	__asm volatile("dcache.ipa %0"
+			:
+			: "r"(addr));
+}
+
+inline void __DCACHE_CIPA(uint64_t addr)
+{
+	__asm volatile("dcache.cipa %0"
+			:
+                        : "r"(addr));
+}
+
+inline void __DCACHE_CPA(uint64_t addr)
+{
+	    __asm volatile("dcache.cpa %0"
+		        :
+       			: "r"(addr));
+}
+
+static inline void csi_dcache_invalid_range(void *addr, int64_t dsize)
+{
+	int64_t op_size = dsize + (uint64_t)addr % 64;
+	uint64_t op_addr = (uint64_t)addr;
+	int64_t linesize = 64;
+
+	__asm volatile("fence");
+	
+	while (op_size > 0) {
+		__DCACHE_IPA(op_addr);
+		op_addr += linesize;
+		op_size -= linesize;
+	}
+
+	__asm volatile("fence");
+}
+
+static inline void csi_dcache_clean_range(void *addr, int64_t dsize)
+{
+	int64_t op_size = dsize + (uint64_t)addr % 64;
+	uint64_t op_addr = (uint64_t)addr & (0xFFFFFFFFUL << 6U);
+	int64_t linesize = 64;
+
+	__asm volatile("fence");
+	
+	while (op_size > 0) {
+		__DCACHE_CPA(op_addr);
+		op_addr += linesize;
+		op_size -= linesize;
+	}
+
+	__asm volatile("fence");
+}
+
+inline void csi_dcache_clean_invalid_range(void *addr, int64_t dsize)
+{
+
+	int64_t op_size = dsize + (uint64_t)addr % 64;
+	uint64_t op_addr = (uint64_t)addr;
+	int64_t linesize = 64;
+
+	__asm volatile("fence");
+
+	while (op_size > 0) {
+		__DCACHE_CIPA(op_addr);
+	    	op_addr += linesize;
+		op_size -= linesize;
+	}
+	
+	__asm volatile("fence");
+}
+
+
+inline void csi_l2cache_clean_invalid(void)
+{
+
+	__asm volatile("fence");
+	__asm volatile("fence.i");	
+	__asm volatile("l2cache.ciall");
+	__asm volatile("fence");
+	__asm volatile("fence.i");	
+
+}
+
+inline void csi_l2cache_clean(void)
+{
+
+	__asm volatile("fence");
+	__asm volatile("fence.i");	
+	__asm volatile("l2cache.call");
+	__asm volatile("fence");
+	__asm volatile("fence.i");	
+
+}
+
+inline void csi_l2cache_invalid(void)
+{
+
+	__asm volatile("fence");
+	__asm volatile("fence.i");	
+	__asm volatile("l2cache.iall");
+	__asm volatile("fence");
+	__asm volatile("fence.i");	
+
+}
+
+/****************************************************************************/ /**
+ * @brief  SDH transfer data in blocking way
+ *
+ * @param  handle: SDH handler
+ * @param  dmaCfg: DMA config pointer
+ * @param  transfer: Transfer config pointer
+ *
+ * @return Transfer deal status
+ *
+*******************************************************************************/
+SDH_Stat_Type SDH_TransferNonBlocking(SDH_DMA_Cfg_Type *dmaCfg, SDH_Trans_Cfg_Type *transfer)
+{
+    SDH_Stat_Type stat = SDH_STAT_SUCCESS;
+    SDH_CMD_Cfg_Type *cmdCfg = transfer->cmdCfg;
+    SDH_Data_Cfg_Type *dataCfg = transfer->dataCfg;
+    uint32_t intStatus;
+    uint8_t executeTuning = ((dataCfg == NULL) ? 0 : dataCfg->dataType == SDH_TRANS_DATA_TUNING);
+
+    /* Check re-tuning request */
+    intStatus = SDH_GetIntStatus();
+
+    if ((intStatus & SDH_INT_RETUNE_EVENT) != 0U) {
+        SDH_ClearIntStatus(SDH_INT_RETUNE_EVENT);
+        return SDH_STAT_RETUNE_REQ;
+    }
+    
+    /* Update ADMA descriptor table according to different DMA mode(simple DMA, ADMA1, ADMA2).*/
+    if ((dataCfg != NULL) && (dmaCfg != NULL) && (!executeTuning)) {
+        stat = SDH_CreateAdmaEntryConfig(dmaCfg, dataCfg, (dataCfg->dataType & SDH_TRANS_DATA_BOOT) ? SDH_ADMA_FLAG_MULTI_DESC : SDH_ADMA_FLAG_SINGLE_DESC);
+    }
+
+    /* If the DMA desciptor configure fail or not needed , disable it */
+    if (stat != SDH_STAT_SUCCESS) {
+        /* Disable DMA, using polling mode in this situation */
+        //SDH_DisableDMA();
+        return stat;
+    }
+
+    /* Config the data transfer parameter */
+    stat = SDH_ConfigDataTranfer(dataCfg);
+
+    if (SDH_STAT_SUCCESS != stat) {
+        return stat;
+    }
+
+    /* Send command first */
+    if (dataCfg != NULL) {
+        cmdCfg->flag |= SDH_TRANS_FLAG_DATA_PRESENT;
+    }
+
+
+    csi_l2cache_clean_invalid();
+    //csi_dcache_invalid_range(adma2Entries, ADMA2ENTRIES_SIZE);
+    csi_dcache_clean_range(adma2Entries, ADMA2ENTRIES_SIZE);
+    //csi_dcache_clean_invalid_range(adma2Entries, ADMA2ENTRIES_SIZE);
+    SDH_SendCommand(cmdCfg);
+
+
+    return SDH_STAT_SUCCESS;
+}
+
 /**
   * @brief  Allows to read blocks from a specified address  in a card.  The Data
   *         transfer can be managed by DMA mode or Polling mode. //?????
@@ -1529,8 +1717,10 @@ SDH_Stat_Type SDH_TransferBlocking(SDH_DMA_Cfg_Type *dmaCfg, SDH_Trans_Cfg_Type 
   * @param  NumberOfBlocks: number of blocks to be read.
   * @retval SD_Error: SD Card Error code.
   */
-SD_Error SDH_ReadMultiBlocks(uint8_t *readbuff, uint32_t ReadAddr, uint16_t BlockSize, uint32_t NumberOfBlocks)
+SD_Error SDH_ReadMultiBlocksNonBlock(uint8_t *readbuff, uint32_t ReadAddr, uint16_t BlockSize, uint32_t NumberOfBlocks)
 {
+	uint64_t wait_count = 0;
+	static uint64_t wait_count_max = 0;
 	SD_Error errorstatus = SD_OK;	
 	SDH_Stat_Type stat = SDH_STAT_SUCCESS;
 	if (CardType == SDIO_HIGH_CAPACITY_SD_CARD)//for sdhc block size is fixed to 512bytes 
@@ -1578,7 +1768,7 @@ SD_Error SDH_ReadMultiBlocks(uint8_t *readbuff, uint32_t ReadAddr, uint16_t Bloc
 	SDH_Data_Cfg_TypeInstance.blockSize = BlockSize;
 	SDH_Data_Cfg_TypeInstance.blockCount = NumberOfBlocks;
 	SDH_Data_Cfg_TypeInstance.rxDataLen = 0;
-	SDH_Data_Cfg_TypeInstance.rxData = (uint32_t *)readbuff;
+	SDH_Data_Cfg_TypeInstance.rxData = (uint32_t *)readbuff;//0x3F001000;
 	SDH_Data_Cfg_TypeInstance.txDataLen = 0;
 	SDH_Data_Cfg_TypeInstance.txData = NULL;	
 	/*set parameters for SDH_DMA_Cfg_TypeInstance*/
@@ -1586,8 +1776,8 @@ SD_Error SDH_ReadMultiBlocks(uint8_t *readbuff, uint32_t ReadAddr, uint16_t Bloc
 	SDH_DMA_Cfg_TypeInstance.burstSize = SDH_BURST_SIZE_128_BYTES;
 	SDH_DMA_Cfg_TypeInstance.fifoThreshold = SDH_FIFO_THRESHOLD_256_BYTES;
 	SDH_DMA_Cfg_TypeInstance.admaEntries = (uint32_t *)adma2Entries;
-	SDH_DMA_Cfg_TypeInstance.maxEntries = sizeof(adma2Entries)/sizeof(adma2Entries[0]);
-	
+	SDH_DMA_Cfg_TypeInstance.maxEntries = ADMA2ENTRIES_SIZE;
+
 	stat = SDH_TransferBlocking(/*&SDH_DMA_Cfg_TypeInstance*/NULL, &SDH_Trans_Cfg_TypeInstance);
 	
 	if(stat != SDH_STAT_SUCCESS){
@@ -1611,7 +1801,154 @@ SD_Error SDH_ReadMultiBlocks(uint8_t *readbuff, uint32_t ReadAddr, uint16_t Bloc
 #endif
 	errorstatus = SDH_STAT_SUCCESS;//SDH_WaitStatus;
 	SDH_WaitStatus = SD_WAITING;
+	return(errorstatus);		
+}
+
+/**
+  * @brief  Allows to read blocks from a specified address  in a card.  The Data
+  *         transfer can be managed by DMA mode or Polling mode. //?????
+  * @note   This operation should be followed by two functions to check if the 
+  *         DMA Controller and SD Card status.	   //dma????????????
+  *          - SD_ReadWaitOperation(): this function insure that the DMA
+  *            controller has finished all data transfer. 
+  *          - SD_GetStatus(): to check that the SD Card has finished the 
+  *            data transfer and it is ready for data.   
+  * @param  readbuff: pointer to the buffer that will contain the received data.
+  * @param  ReadAddr: Address from where data are to be read.
+  * @param  BlockSize: the SD card Data block size. The Block size should be 512.
+  * @param  NumberOfBlocks: number of blocks to be read.
+  * @retval SD_Error: SD Card Error code.
+  */
+SD_Error SDH_ReadMultiBlocks(uint8_t *readbuff, uint32_t ReadAddr, uint16_t BlockSize, uint32_t NumberOfBlocks)
+{
+	uint64_t wait_count = 0;
+	static uint64_t wait_count_max = 0;
+	SD_Error errorstatus = SD_OK;	
+	SDH_Stat_Type stat = SDH_STAT_SUCCESS;
+	if (CardType == SDIO_HIGH_CAPACITY_SD_CARD)//for sdhc block size is fixed to 512bytes 
+ 	{
+    		BlockSize = 512;
+  	}	
 	
+	//printk("Read-->IN, read %d blocks from %d with buffer 0x%p. \r\n",NumberOfBlocks,ReadAddr,readbuff);
+	
+	/*!< Set Block Size for SDSC Card,cmd16,no impact on SDHC card */
+	SDH_CMD_Cfg_TypeInstance.index = SD_CMD_SET_BLOCKLEN;
+	SDH_CMD_Cfg_TypeInstance.argument = (uint32_t) BlockSize;
+	SDH_CMD_Cfg_TypeInstance.type = SDH_CMD_NORMAL;
+	SDH_CMD_Cfg_TypeInstance.respType = SDH_RESP_R1;
+	SDH_CMD_Cfg_TypeInstance.flag = SDH_TRANS_FLAG_NONE;
+	
+	SDH_SendCommand(&SDH_CMD_Cfg_TypeInstance);	
+	stat = SDH_WaitCommandDone(&SDH_CMD_Cfg_TypeInstance);
+	//printk("stat:%d response:%x\n", stat, SDH_CMD_Cfg_TypeInstance.response[0]);
+	if(stat != SDH_STAT_SUCCESS){
+		return SD_CMD_ERROR;
+	}else if(SDH_CMD_Cfg_TypeInstance.response[0] & SD_CSR_ERRORBITS){
+		return SD_CMD_ERROR;
+	}	
+	
+	/*set cmd parameter for READ_MULTIPLE_BLOCK*/
+	if(NumberOfBlocks<=1)
+		SDH_CMD_Cfg_TypeInstance.index = SD_CMD_READ_SINGLE_BLOCK;
+	else
+		SDH_CMD_Cfg_TypeInstance.index = SD_CMD_READ_MULT_BLOCK;
+
+	SDH_CMD_Cfg_TypeInstance.argument =  (uint32_t)ReadAddr;
+	SDH_CMD_Cfg_TypeInstance.type = SDH_CMD_NORMAL;
+	SDH_CMD_Cfg_TypeInstance.respType = SDH_RESP_R1;
+	SDH_CMD_Cfg_TypeInstance.flag = SDH_TRANS_FLAG_DATA_PRESENT;	
+	/*set data parameter for READ_MULTIPLE_BLOCK*/
+	if(NumberOfBlocks<=1)
+		SDH_Data_Cfg_TypeInstance.enableAutoCommand12 = DISABLE;
+	else
+		SDH_Data_Cfg_TypeInstance.enableAutoCommand12 = ENABLE;
+	
+	SDH_Data_Cfg_TypeInstance.enableAutoCommand23 = DISABLE;
+	SDH_Data_Cfg_TypeInstance.enableIgnoreError = DISABLE;
+	SDH_Data_Cfg_TypeInstance.dataType = SDH_TRANS_DATA_NORMAL;
+	SDH_Data_Cfg_TypeInstance.blockSize = BlockSize;
+	SDH_Data_Cfg_TypeInstance.blockCount = NumberOfBlocks;
+	SDH_Data_Cfg_TypeInstance.rxDataLen = 0;
+	SDH_Data_Cfg_TypeInstance.rxData = (uint32_t *)readbuff;//0x3F001000;
+	SDH_Data_Cfg_TypeInstance.txDataLen = 0;
+	SDH_Data_Cfg_TypeInstance.txData = NULL;	
+	/*set parameters for SDH_DMA_Cfg_TypeInstance*/
+	SDH_DMA_Cfg_TypeInstance.dmaMode = SDH_DMA_MODE_ADMA2;
+	SDH_DMA_Cfg_TypeInstance.burstSize = SDH_BURST_SIZE_128_BYTES;
+	SDH_DMA_Cfg_TypeInstance.fifoThreshold = SDH_FIFO_THRESHOLD_256_BYTES;
+	SDH_DMA_Cfg_TypeInstance.admaEntries = (uint32_t *)adma2Entries;
+	SDH_DMA_Cfg_TypeInstance.maxEntries = ADMA2ENTRIES_SIZE;
+
+#ifdef SDH_BLOCK	
+	stat = SDH_TransferBlocking(/*&SDH_DMA_Cfg_TypeInstance*/NULL, &SDH_Trans_Cfg_TypeInstance);
+	
+	if(stat != SDH_STAT_SUCCESS){
+		if(stat == SDH_STAT_DMA_ADDR_NOT_ALIGN)
+			return SD_ADMA_ALIGN_ERROR;
+		else
+			return SD_DATA_ERROR;
+	}
+	
+#if 0
+	SDH_ITConfig(SDH_INT_DATA_COMPLETED|SDH_INT_DATA_ERRORS|SDH_INT_DMA_ERROR|SDH_INT_AUTO_CMD12_ERROR,ENABLE);
+	
+	/*wait for Xfer status. might pending here in multi-task OS*/
+	//while(SDH_WaitStatus == SD_WAITING){}	
+	{
+		unsigned int count = 0;
+		while(count++ < 2000000);
+	}
+	SDH_ITConfig(SDH_INT_DATA_COMPLETED|SDH_INT_DATA_ERRORS|SDH_INT_DMA_ERROR|SDH_INT_AUTO_CMD12_ERROR,DISABLE);
+		
+#endif
+	errorstatus = SDH_STAT_SUCCESS;//SDH_WaitStatus;
+	SDH_WaitStatus = SD_WAITING;
+#else
+
+	csi_l2cache_invalid();
+	csi_dcache_invalid_range(readbuff, BlockSize*NumberOfBlocks);
+	stat = SDH_TransferNonBlocking(&SDH_DMA_Cfg_TypeInstance, &SDH_Trans_Cfg_TypeInstance);
+	
+	if(stat != SDH_STAT_SUCCESS){
+		if(stat == SDH_STAT_DMA_ADDR_NOT_ALIGN)
+			return SD_ADMA_ALIGN_ERROR;
+		else
+			return SD_DATA_ERROR;
+	}
+	
+	SDH_ITConfig(SDH_INT_DATA_COMPLETED|SDH_INT_DATA_ERRORS|SDH_INT_DMA_ERROR|SDH_INT_AUTO_CMD12_ERROR,ENABLE);
+	
+	//wait for Xfer status. might pending here in multi-task OS
+	//while(SDH_WaitStatus == SD_WAITING){}	
+	while(1)
+	{
+		uint32_t intFlag;
+		intFlag = SDH_GetIntStatus();
+		if (intFlag & SDH_INT_DATA_COMPLETED)
+		{
+			//printk("int flag:%x\n", intFlag);
+			SDH_ClearIntStatus(intFlag);
+			break;
+		}
+		wait_count++;
+		if(wait_count > 10000000)
+			break;
+	}
+	if(wait_count > wait_count_max)
+	{
+		wait_count_max = wait_count;
+		printk("wait_count_max:%lld\n", wait_count_max);
+	}
+	//csi_dcache_invalid_range(readbuff, BlockSize*NumberOfBlocks);
+	csi_dcache_invalid_range(readbuff, BlockSize*NumberOfBlocks);
+	
+	msleep(1);
+	SDH_ITConfig(SDH_INT_DATA_COMPLETED|SDH_INT_DATA_ERRORS|SDH_INT_DMA_ERROR|SDH_INT_AUTO_CMD12_ERROR,DISABLE);	
+
+	errorstatus = SDH_STAT_SUCCESS;//SDH_WaitStatus;
+	SDH_WaitStatus = SD_WAITING;
+#endif
 	return(errorstatus);		
 }
 
@@ -1953,7 +2290,7 @@ SD_Error SDH_WriteMultiBlocks(uint8_t *writebuff, uint32_t WriteAddr, uint16_t B
 	SDH_DMA_Cfg_TypeInstance.burstSize = SDH_BURST_SIZE_128_BYTES;
 	SDH_DMA_Cfg_TypeInstance.fifoThreshold = SDH_FIFO_THRESHOLD_256_BYTES;
 	SDH_DMA_Cfg_TypeInstance.admaEntries = (uint32_t *)adma2Entries;
-	SDH_DMA_Cfg_TypeInstance.maxEntries = sizeof(adma2Entries)/sizeof(adma2Entries[0]);
+	SDH_DMA_Cfg_TypeInstance.maxEntries = ADMA2ENTRIES_SIZE;
 	//printk("2.\n");	
 	
 	SDH_EnableIntSource(SDH_INT_DATA_COMPLETED);
@@ -1997,15 +2334,89 @@ SD_Error SDH_WriteMultiBlocks(uint8_t *writebuff, uint32_t WriteAddr, uint16_t B
 EXPORT_SYMBOL(SDH_WriteMultiBlocks);
 EXPORT_SYMBOL(SDH_ReadMultiBlocks);
 
+void read_sd_block_demo(void)
+{
+	int ret;
+	int i;
+	int zero_flag = 1;
+	unsigned int index = 0;
+	static char buf1[1024] = {0};
+	static char *buf = NULL;
+	static char str_buf[4096] = {0};
+	
+	//if(!buf)
+	{
+		//buf = kmalloc(4096, ZONE_NORMAL);
+
+		buf = ioremap(0x3F001000, 4096);
+	}
+	while(index < 50000)
+	{
+
+		//printk("buf:%px %lx rand:%d", buf, virt_to_phys(buf), index);
+		ret = SDH_ReadMultiBlocks(buf, index, 512, 1);
+		//printk("ret %d\n", ret);
+
+		ret = SDH_ReadMultiBlocksNonBlock(buf1, index, 512, 1);
+		//printk("ret %d\n", ret);
+
+		csi_dcache_clean_range(buf, 1024);
+		if(memcmp(buf, buf1, 512))
+		{
+			printk("%d no ok\n", index);
+			break;
+		}
+		if(index%100 == 0)
+			printk("index:%d\n", index);
+
+		index++;
+		msleep(1);
+	}
+
+	str_buf[0] = 0;
+	for(i = 1; i <= 512; i++)
+	{
+		if(buf[i-1])
+		{
+			zero_flag = 0;
+			break;
+		}
+	}
+	//if(!zero_flag)
+	{
+		for(i = 1; i <= 512; i++)
+		{
+			
+			if(buf[i-1] != buf1[i-1])
+			{
+				sprintf(str_buf+strlen(str_buf), 
+						"%3d:%02x:%02x ", i-1, 
+						buf[i-1], buf1[i-1]);
+			}
+			if(strlen(str_buf) > 50)
+			{
+				printk("%s\n", str_buf);
+				str_buf[0] = 0;
+			}
+
+		}
+	}
+	printk("%s\n", str_buf);
+	iounmap(buf);
+}
 
 void read_sd_block(unsigned int index)
 {
 	int ret;
 	int i;
 	int zero_flag = 1;
-	char buf[1024] = {0};
+	//static char buf[1024] = {0};
+	static char *buf = NULL;
 	static char str_buf[4096] = {0};
 	
+	if(!buf)
+		buf = kmalloc(4096, ZONE_NORMAL);
+
 	printk("buf:%px rand:%d", buf, index);
 	ret = SDH_ReadMultiBlocks(buf, index, 512, 1);
 	printk("ret %d\n", ret);
@@ -2214,10 +2625,16 @@ static int __init shm_driver_init(void) {
     if (!mapped_addr) {  
             printk("ioremap_nocache error!\n");
 	    return -ENOMEM;  
-    }  
+    }
+
+    //adma2Entries = kmalloc(1024, ZONE_DMA32); //ADMA2ENTRIES_SIZE
+    //adma2EntriesPhy = (void *)virt_to_phys(adma2Entries);
+    adma2EntriesPhy = (void*)0x3F000000;
+    adma2Entries = ioremap((phys_addr_t)adma2EntriesPhy, 1024);
+    printk("0x%px mapped_addr 0x%px size:%ld\n", 
+		    adma2EntriesPhy, adma2Entries, ADMA2ENTRIES_SIZE); 
 
     SDH_EnableIntStatus(SDH_INT_ALL);
-    printk("stat:%x\n", BL_RD_REG(SDH_BASE_ADDR, SDH_SD_PRESENT_STATE_1));
     {
 	uint32_t int_status;
 	SD_Error errorstatus = SD_OK;
@@ -2277,6 +2694,7 @@ static int __init shm_driver_init(void) {
 static void __exit shm_driver_exit(void) {
 	sdblkdev_deinit();
     	iounmap(mapped_addr); 
+	iounmap((phys_addr_t)adma2EntriesPhy);
 	device_destroy(my_class, first_dev);
 	class_destroy(my_class);
 	unregister_chrdev_region(first_dev, 1);

@@ -1,34 +1,6 @@
 #define CPU_D0
 #define IRQ_NUM_BASE 16
-#include <linux/module.h>  
-#include <linux/kernel.h>  
-#include <linux/fs.h>  
-#include <asm/io.h>  
-#include <linux/cdev.h>  
-#include <linux/device.h>  
-#include <linux/dma-mapping.h>  
-#include <linux/interrupt.h> 
-#include <linux/irqdomain.h>
-#include <linux/random.h>
-#include <linux/blkdev.h> 
-#include <linux/hdreg.h> 
-#include <linux/version.h>
-#include <linux/vmalloc.h>
-#include <linux/delay.h>
-
-//#include "core_rv64.h"
-#include "ipc_reg.h"
-#include "sdh_reg.h"
-#include "bl_sdh.h"
-#define XRAM_ADDRESS 0x40000000
-
-#define PHYSICAL_ADDRESS 0x20060000//SDH_BASE_ADDR //0x3F002000   
-#undef SDH_BASE_ADDR
-#define SIZE 4096  // 示例大小，你可以根据需要更改  
-
-#define DEVICE_NAME "shm"  
-#define DEVICE_FILE_NAME "/dev/" DEVICE_NAME  
-
+#include "sdh.h"
 
 volatile void *mapped_addr = NULL;  
 #define SDH_BASE_ADDR mapped_addr 
@@ -36,165 +8,6 @@ volatile void *mapped_addr = NULL;
 #define SDH_CLK_SRC                     (50000000ul)
 #define SDH_CLK_INIT                    (400000ul)
 #define SDH_CLK_TRANSFER                (50000000ul) 
-#if 0
-#define SD_CMD_GO_IDLE_STATE                       ((uint8_t)0)
-/**
- *  @brief SDH interrupt type definition
- */
-#define SDH_INT_CMD_COMPLETED      ((uint32_t)(0x00000001)) /*!< SDH command complete interrupt */
-#define SDH_INT_DATA_COMPLETED     ((uint32_t)(0x00000002)) /*!< SDH data complete interrupt */
-#define SDH_INT_BLK_GAP_EVENT      ((uint32_t)(0x00000004)) /*!< SDH block gap event interrupt */
-#define SDH_INT_DMA_COMPLETED      ((uint32_t)(0x00000008)) /*!< SDH DMA complete interrupt */
-#define SDH_INT_BUFFER_WRITE_READY ((uint32_t)(0x00000010)) /*!< SDH buffer write ready interrupt */
-#define SDH_INT_BUFFER_READ_READY  ((uint32_t)(0x00000020)) /*!< SDH buffer read ready interrupt */
-#define SDH_INT_CARD_INSERT        ((uint32_t)(0x00000040)) /*!< SDH card insert interrupt */
-#define SDH_INT_CARD_REMOVE        ((uint32_t)(0x00000080)) /*!< SDH card remove interrupt */
-#define SDH_INT_CARD               ((uint32_t)(0x00000100)) /*!< SDH card produce interrupt */
-#define SDH_INT_DRIVER_TA          ((uint32_t)(0x00000200)) /*!< SDH driver type A interrupt */
-#define SDH_INT_DRIVER_TB          ((uint32_t)(0x00000400)) /*!< SDH driver type B interrupt */
-#define SDH_INT_DRIVER_TC          ((uint32_t)(0x00000800)) /*!< SDH driver type C interrupt */
-#define SDH_INT_RETUNE_EVENT       ((uint32_t)(0x00001000)) /*!< SDH re-tuning event interrupt */
-#define SDH_INT_CMD_TIMEOUT        ((uint32_t)(0x00010000)) /*!< SDH command timeout interrupt */
-#define SDH_INT_DATA_CRC_ERROR     ((uint32_t)(0x00200000)) /*!< SDH data CRC error interrupt */
-#define SDH_INT_DATA_ENDBIT_ERROR  ((uint32_t)(0x00400000)) /*!< SDH data endbit error interrupt */
-#define SDH_INT_CURRENT_ERROR      ((uint32_t)(0x00800000)) /*!< SDH current error interrupt */
-#define SDH_INT_AUTO_CMD12_ERROR   ((uint32_t)(0x01000000)) /*!< SDH auto command12 error */
-#define SDH_INT_DMA_ERROR          ((uint32_t)(0x02000000)) /*!< SDH DMA error interrupt */
-#define SDH_INT_TUNE_ERROR         ((uint32_t)(0x04000000)) /*!< SDH tuning maybe fail,this bit is set when an unrecoverable error is detected in a tuning circuit except during tuning procedure */
-#define SDH_INT_SPI_ERROR          ((uint32_t)(0x10000000)) /*!< SDH SPI mode error,read  <SPI Error Token> field in the SPI mode register */
-#define SDH_INT_AXI_RESP_ERROR     ((uint32_t)(0x20000000)) /*!< SDH AXI bus response error */
-#define SDH_INT_CPL_TIMEOUT_ERROR  ((uint32_t)(0x40000000)) /*!< SDH command completion signal timeout error,this field is applicable for CE-ATA mode only */
-#define SDH_INT_CRC_STAT_ERROR     ((uint32_t)(0x80000000)) /*!< SDH CRC status start bit or CRC status end bit or boot ack status, returned from the card in write transaction has errors */
-#define SDH_INT_CMD_ERRORS         ((uint32_t)(0x000f0000)) /*!< SDH all command errors */
-#define SDH_INT_DATA_ERRORS        ((uint32_t)(0x01700000)) /*!< SDH all data errors */
-#define SDH_INT_ALL                ((uint32_t)(0xffffffff)) /*!< SDH all interrupt */
-
-/**
- *  @brief SDH present flag type definition
- */
-typedef enum {
-    SDH_PRESENT_FLAG_CMD_INHBIT = 0x00000001,       /*!< Command inhbit */
-    SDH_PRESENT_FLAG_DATA_INHBIT = 0x00000002,      /*!< Data inhbit */
-    SDH_PRESENT_FLAG_DATA_LINE_ACTIVE = 0x00000004, /*!< Data line active */
-    SDH_PRESENT_FLAG_RETUNE_REQ = 0x00000008,       /*!< Retuning request */
-    SDH_PRESENT_FLAG_TX_ACTIVE = 0x00000100,        /*!< Write trnasfer atcive */
-    SDH_PRESENT_FLAG_RX_ACTIVE = 0x00000200,        /*!< Read transfer active */
-    SDH_PRESENT_FLAG_BUF_WRITE_ENABLE = 0x00000400, /*!< Buffer write enabled */
-    SDH_PRESENT_FLAG_BUF_READ_ENABLE = 0x00000800,  /*!< Buffer read enabled */
-    SDH_PRESENT_FLAG_CARD_INSERT = 0x00010000,      /*!< Card intert */
-    SDH_PRESENT_FLAG_CARD_STABLE = 0x00020000,      /*!< Card stable */
-    SDH_PRESENT_FLAG_CARD_DET = 0x00040000,         /*!< Card detect */
-    SDH_PRESENT_FLAG_CARD_WP = 0x00080000,          /*!< Card write protect */
-    SDH_PRESENT_FLAG_DATA0_LINE_LEVEL = 0x00100000, /*!< Data 0 line signal level */
-    SDH_PRESENT_FLAG_DATA1_LINE_LEVEL = 0x00200000, /*!< Data 1 line signal level */
-    SDH_PRESENT_FLAG_DATA2_LINE_LEVEL = 0x00400000, /*!< Data 2 line signal level */
-    SDH_PRESENT_FLAG_DATA3_LINE_LEVEL = 0x00800000, /*!< Data 3 line signal level */
-    SDH_PRESENT_FLAG_CMD_LINE_LEVEL = 0x01000000,   /*!< Command line signal level */
-} SDH_Present_Flag_Type;
-
-
-
-/**
- *  @brief SDH status type definition
- */
-typedef enum {
-    SDH_STAT_SUCCESS = 0,        /*!< SDH status success */
-    SDH_STAT_BUSY,               /*!< SDH status busy */
-    SDH_STAT_INVLAID_PARA,       /*!< SDH status invalid parameter */
-    SDH_STAT_NOT_SUPPORT,        /*!< SDH not support this feature */
-    SDH_STAT_OUTOF_RANGE,        /*!< SDH out of range */
-    SDH_STAT_PREPARE_DESC,       /*!< SDH status prepare ADMA descriptor */
-    SDH_STAT_SEND_CMD_FAIL,      /*!< SDH status send command fail */
-    SDH_STAT_SEND_DATA_FAIL,     /*!< SDH status send data fail */
-    SDH_STAT_RECV_DATA_FAIL,     /*!< SDH status receive data fail */
-    SDH_STAT_DMA_ADDR_NOT_ALIGN, /*!< SDH status DMA address not align */
-    SDH_STAT_RETUNE_REQ,         /*!< SDH status re-tune request */
-    SDH_STAT_TUNE_ERROR,         /*!< SDH status tune error */
-} SDH_Stat_Type;
-
-/**
- *  @brief SDH Command type definition
- */
-typedef enum {
-    SDH_CMD_NORMAL,  /*!< SDH command type:normal */
-    SDH_CMD_SUSPEND, /*!< SDH command type:suspend */
-    SDH_CMD_RESUME,  /*!< SDH command type:resume */
-    SDH_CMD_ABORT,   /*!< SDH command type:abort */
-    SDH_CMD_EMPTY,   /*!< SDH command type:empty */
-} SDH_Cmd_Type;
-/**
- *  @brief SDH response type definition
- */
-typedef enum {
-    SDH_RESP_NONE, /*!< SDH response type:none */
-    SDH_RESP_136LEN,
-    SDH_RESP_48LEN,
-    SDH_RESP_48LEN_BUSY,
-    SDH_RESP_R1,  /*!< SDH response type:r1 */
-    SDH_RESP_R1B, /*!< SDH response type:r1b */
-    SDH_RESP_R2,  /*!< SDH response type:r2 */
-    SDH_RESP_R3,  /*!< SDH response type:r3 */
-    SDH_RESP_R4,  /*!< SDH response type:r4 */
-    SDH_RESP_R5,  /*!< SDH response type:r5 */
-    SDH_RESP_R5B, /*!< SDH response type:r5b */
-    SDH_RESP_R6,  /*!< SDH response type:r6 */
-    SDH_RESP_R7,  /*!< SDH response type:r7 */
-} SDH_Resp_Type;
-
-/**
- *  @brief SDH trnasfer flag type definition
- */
-typedef enum {
-    SDH_TRANS_FLAG_NONE = 0x00000000,
-    SDH_TRANS_FLAG_EN_DMA = 0x00000001,                /*!< Enable DMA */
-    SDH_TRANS_FLAG_EN_BLK_COUNT = 0x00000002,          /*!< Enable block count */
-    SDH_TRANS_FLAG_EN_AUTO_CMD12 = 0x00000004,         /*!< Enable auto CMD12 */
-    SDH_TRANS_FLAG_EN_AUTO_CMD23 = 0x00000008,         /*!< Enable auto CMD23 */
-    SDH_TRANS_FLAG_READ_DATA = 0x00000010,             /*!< Enable read data */
-    SDH_TRANS_FLAG_MULTI_BLK = 0x00000020,             /*!< Enable multi-block data operation */
-    SDH_TRANS_FLAG_RESP_136BITS = 0x00010000,          /*!< Response is 136 bits length */
-    SDH_TRANS_FLAG_RESP_48BITS = 0x00020000,           /*!< Response is 48 bits length */
-    SDH_TRANS_FLAG_RESP_48BITS_WITH_BUSY = 0x00030000, /*!< Response is 48 bits length with busy status */
-    SDH_TRANS_FLAG_EN_CRC_CHECK = 0x00080000,          /*!< Enable CRC check */
-    SDH_TRANS_FLAG_EN_INDEX_CHECK = 0x00100000,        /*!< Enable index check */
-    SDH_TRANS_FLAG_DATA_PRESENT = 0x00200000,          /*!< Data present */
-    SDH_TRANS_FLAG_SUSPEND = 0x00400000,               /*!< Suspend command */
-    SDH_TRANS_FLAG_RESUME = 0x00800000,                /*!< Resume command */
-    SDH_TRANS_FLAG_ABORT = 0x00C00000,                 /*!< Abort command */
-} SDH_Trans_Flag_Type;
-
-
-
-#define SDH_EnableIntSource(mask)                                                 \
-    do {                                                                          \
-        BL_WR_REG(SDH_BASE_ADDR, SDH_SD_NORMAL_INT_STATUS_INT_EN,                      \
-                  BL_RD_REG(SDH_BASE_ADDR, SDH_SD_NORMAL_INT_STATUS_INT_EN) | (mask)); \
-    } while (0)
-#define SDH_DisableIntSource(mask)                                                   \
-    do {                                                                             \
-        BL_WR_REG(SDH_BASE_ADDR, SDH_SD_NORMAL_INT_STATUS_INT_EN,                         \
-                  BL_RD_REG(SDH_BASE_ADDR, SDH_SD_NORMAL_INT_STATUS_INT_EN) & (~(mask))); \
-    } while (0)
-#define SDH_GetIntStatus()       BL_RD_REG(SDH_BASE_ADDR, SDH_SD_NORMAL_INT_STATUS);
-#define SDH_GetIntEnableStatus() BL_RD_REG(SDH_BASE_ADDR, SDH_SD_NORMAL_INT_STATUS_INT_EN);
-#define SDH_ClearIntStatus(mask) BL_WR_REG(SDH_BASE_ADDR, SDH_SD_NORMAL_INT_STATUS, (mask));
-
-/**
- *  @brief SDH command config structure type definition
- */
-typedef struct
-{
-    uint32_t index;         /*!< SDH command index */
-    uint32_t argument;      /*!< SDH command argument */
-    SDH_Cmd_Type type;      /*!< SDH command type */
-    SDH_Resp_Type respType; /*!< SDH command response type */
-    uint32_t response[4U];  /*!< SDH response for this command */
-    uint32_t flag;          /*!< SDH cmd flag */
-} SDH_CMD_Cfg_Type;
-
-
-#endif
-
 
 volatile void *xram_addr = NULL;
 volatile void *ipc_reg = NULL;
@@ -203,18 +16,6 @@ volatile int ipi_cnt = 0;
 static dev_t first_dev;  
 static struct cdev my_cdev;  
 static struct class *my_class; 
-
-#define BL_WR_WORD(addr, val)  ((*(volatile uint32_t *)(uintptr_t)(addr)) = (val))
-#define BL_WR_REG(addr, regname, val)             BL_WR_WORD(addr + regname##_OFFSET, val)
-
-#define BL_RD_WORD(addr)       (*((volatile uint32_t *)(uintptr_t)(addr)))
-#define BL_RD_REG(addr, regname)                  BL_RD_WORD(addr + regname##_OFFSET)
-
-#define BL_SET_REG_BITS_VAL(val, bitname, bitval) (((val)&bitname##_UMSK) | ((uint32_t)(bitval) << bitname##_POS))
-
-#define BL_RD_SHORT(addr)      (*((volatile uint16_t *)(uintptr_t)(addr)))
-#define BL_WR_SHORT(addr, val) ((*(volatile uint16_t *)(uintptr_t)(addr)) = (val))
-#define BL_WR_REG16(addr, regname, val)           BL_WR_SHORT(addr + regname##_OFFSET, val)
 
 void read_sd_block(unsigned int index);
 void write_sd_block(unsigned int index);
@@ -1533,151 +1334,6 @@ SDH_Stat_Type SDH_TransferBlocking(SDH_DMA_Cfg_Type *dmaCfg, SDH_Trans_Cfg_Type 
 }
 
 
-inline void __DCACHE_IPA(uint64_t addr)
-{
-	__asm volatile("dcache.ipa %0"
-			:
-			: "r"(addr));
-}
-
-inline void __DCACHE_CIPA(uint64_t addr)
-{
-	__asm volatile("dcache.cipa %0"
-			:
-                        : "r"(addr));
-}
-
-inline void __DCACHE_CPA(uint64_t addr)
-{
-	    __asm volatile("dcache.cpa %0"
-		        :
-       			: "r"(addr));
-}
-
-static inline void csi_dcache_invalid_range(void *addr, int64_t dsize)
-{
-	int64_t op_size = dsize + (uint64_t)addr % 64;
-	uint64_t op_addr = (uint64_t)addr;
-	int64_t linesize = 64;
-
-	__asm volatile("fence");
-	
-	while (op_size > 0) {
-		__DCACHE_IPA(op_addr);
-		op_addr += linesize;
-		op_size -= linesize;
-	}
-
-	__asm volatile("fence");
-}
-
-static inline void csi_dcache_clean_range(void *addr, int64_t dsize)
-{
-	int64_t op_size = dsize + (uint64_t)addr % 64;
-	uint64_t op_addr = (uint64_t)addr & (0xFFFFFFFFUL << 6U);
-	int64_t linesize = 64;
-
-	__asm volatile("fence");
-	
-	while (op_size > 0) {
-		__DCACHE_CPA(op_addr);
-		op_addr += linesize;
-		op_size -= linesize;
-	}
-
-	__asm volatile("fence");
-}
-
-inline void csi_dcache_clean_invalid_range(void *addr, int64_t dsize)
-{
-
-	int64_t op_size = dsize + (uint64_t)addr % 64;
-	uint64_t op_addr = (uint64_t)addr;
-	int64_t linesize = 64;
-
-	__asm volatile("fence");
-
-	while (op_size > 0) {
-		__DCACHE_CIPA(op_addr);
-	    	op_addr += linesize;
-		op_size -= linesize;
-	}
-	
-	__asm volatile("fence");
-}
-
-
-inline void csi_l2cache_clean_invalid(void)
-{
-
-	__asm volatile("fence");
-	__asm volatile("fence.i");	
-	__asm volatile("l2cache.ciall");
-	__asm volatile("fence");
-	__asm volatile("fence.i");	
-
-}
-
-inline void csi_l2cache_clean(void)
-{
-
-	__asm volatile("fence");
-	__asm volatile("fence.i");	
-	__asm volatile("l2cache.call");
-	__asm volatile("fence");
-	__asm volatile("fence.i");	
-
-}
-
-inline void csi_l2cache_invalid(void)
-{
-
-	__asm volatile("fence");
-	__asm volatile("fence.i");	
-	__asm volatile("l2cache.iall");
-	__asm volatile("fence");
-	__asm volatile("fence.i");	
-
-}
-
-#define _RT_STRINGIFY(x...)     #x
-#define RT_STRINGIFY(x...) _RT_STRINGIFY(x)
-#define __OPC_INSN_FORMAT_R(opcode, func3, func7, rd, rs1, rs2) \
-	    ".insn r "RT_STRINGIFY(opcode)","RT_STRINGIFY(func3)","RT_STRINGIFY(func7)","RT_STRINGIFY(rd)","RT_STRINGIFY(rs1)","RT_STRINGIFY(rs2)
-
-#define __OPC_INSN_FORMAT_CACHE(func7, rs2, rs1) \
-	    __OPC_INSN_FORMAT_R(0x0b, 0x0, func7, x0, rs1, rs2)
-
-#define OPC_DCACHE_IVA(rs1)     __OPC_INSN_FORMAT_CACHE(0x1, x6, rs1)
-
-#define CACHE_OP_RS1 %0
-
-#define CACHE_OP_RANGE(instr)                                  \
-	{                                                          \
-	register uint64_t i = start & ~(L1_CACHE_BYTES - 1); \
-	for (; i < end; i += L1_CACHE_BYTES)                   \
-	{                                                      \
-	__asm__ volatile(instr ::"r"(i)                    \
-	: "memory");                      \
-	}                                                      \
-	}
-
-void dcache_inv_range(unsigned long start, unsigned long end)
-{
-    CACHE_OP_RANGE(OPC_DCACHE_IVA(CACHE_OP_RS1));
-}
-
-#define OPC_SYNC                ".long 0x0180000B"
-#define hw_cpu_sync() __asm__ volatile(OPC_SYNC:: \
-		                                              : "memory")
-
-void cpu_dcache_invalidate_local(void *addr, int size)
-{
-	dcache_inv_range((unsigned long)addr, 
-			(unsigned long)((unsigned char *)addr + size));
-	hw_cpu_sync();
-}
-
 /****************************************************************************/ /**
  * @brief  SDH transfer data in blocking way
  *
@@ -1756,8 +1412,6 @@ SDH_Stat_Type SDH_TransferNonBlocking(SDH_DMA_Cfg_Type *dmaCfg, SDH_Trans_Cfg_Ty
   */
 SD_Error SDH_ReadMultiBlocksNonBlock(uint8_t *readbuff, uint32_t ReadAddr, uint16_t BlockSize, uint32_t NumberOfBlocks)
 {
-	uint64_t wait_count = 0;
-	static uint64_t wait_count_max = 0;
 	SD_Error errorstatus = SD_OK;	
 	SDH_Stat_Type stat = SDH_STAT_SUCCESS;
 	if (CardType == SDIO_HIGH_CAPACITY_SD_CARD)//for sdhc block size is fixed to 512bytes 
@@ -1917,34 +1571,6 @@ SD_Error SDH_ReadMultiBlocks(uint8_t *readbuff, uint32_t ReadAddr, uint16_t Bloc
 	SDH_DMA_Cfg_TypeInstance.admaEntries = (uint32_t *)adma2Entries;
 	SDH_DMA_Cfg_TypeInstance.maxEntries = ADMA2ENTRIES_SIZE;
 
-#ifdef SDH_BLOCK	
-	stat = SDH_TransferBlocking(/*&SDH_DMA_Cfg_TypeInstance*/NULL, &SDH_Trans_Cfg_TypeInstance);
-	
-	if(stat != SDH_STAT_SUCCESS){
-		if(stat == SDH_STAT_DMA_ADDR_NOT_ALIGN)
-			return SD_ADMA_ALIGN_ERROR;
-		else
-			return SD_DATA_ERROR;
-	}
-	
-#if 0
-	SDH_ITConfig(SDH_INT_DATA_COMPLETED|SDH_INT_DATA_ERRORS|SDH_INT_DMA_ERROR|SDH_INT_AUTO_CMD12_ERROR,ENABLE);
-	
-	/*wait for Xfer status. might pending here in multi-task OS*/
-	//while(SDH_WaitStatus == SD_WAITING){}	
-	{
-		unsigned int count = 0;
-		while(count++ < 2000000);
-	}
-	SDH_ITConfig(SDH_INT_DATA_COMPLETED|SDH_INT_DATA_ERRORS|SDH_INT_DMA_ERROR|SDH_INT_AUTO_CMD12_ERROR,DISABLE);
-		
-#endif
-	errorstatus = SDH_STAT_SUCCESS;//SDH_WaitStatus;
-	SDH_WaitStatus = SD_WAITING;
-#else
-
-	//csi_l2cache_invalid();
-	//csi_dcache_invalid_range(readbuff, BlockSize*NumberOfBlocks);
 	stat = SDH_TransferNonBlocking(&SDH_DMA_Cfg_TypeInstance, &SDH_Trans_Cfg_TypeInstance);
 	
 	if(stat != SDH_STAT_SUCCESS){
@@ -1978,17 +1604,16 @@ SD_Error SDH_ReadMultiBlocks(uint8_t *readbuff, uint32_t ReadAddr, uint16_t Bloc
 		wait_count_max = wait_count;
 		printk("wait_count_max:%lld\n", wait_count_max);
 	}
-	//csi_dcache_invalid_range(readbuff, BlockSize*NumberOfBlocks);
-	//csi_dcache_invalid_range(readbuff, BlockSize*NumberOfBlocks);
 	
 	//msleep(1);
 	SDH_ITConfig(SDH_INT_DATA_COMPLETED|SDH_INT_DATA_ERRORS|SDH_INT_DMA_ERROR|SDH_INT_AUTO_CMD12_ERROR,DISABLE);	
 
-	cpu_dcache_invalidate_local(readbuff, ALIGN(BlockSize*NumberOfBlocks,4));
+	cpu_dcache_invalidate_local(readbuff, 
+			ALIGN(BlockSize*NumberOfBlocks,4));
 	
 	errorstatus = SDH_STAT_SUCCESS;//SDH_WaitStatus;
 	SDH_WaitStatus = SD_WAITING;
-#endif
+	
 	return(errorstatus);		
 }
 
@@ -2380,19 +2005,14 @@ void read_sd_block_demo(void)
 {
 	int ret;
 	int i;
-	int zero_flag = 1;
 	unsigned int index = 0;
 	static char buf1[1024] = {0};
-	static char buf2[1024];
 	static char *buf = NULL;
 	static char str_buf[4096] = {0};
 	
-	//if(!buf)
+	if(!buf)
 	{
 		buf = kmalloc(4096, ZONE_DMA32);
-
-		//buf = ioremap(0x3F001000, 4096);
-		//buf = memremap(virt_to_phys(buf), 4096, MEMREMAP_WC);
 	}
 	while(index < 5000)
 	{
@@ -2406,10 +2026,6 @@ void read_sd_block_demo(void)
 		if(ret)
 			printk("ret %d\n", ret);
 
-		//csi_l2cache_invalid();	
-		//csi_l2cache_clean_invalid();
-		//csi_dcache_invalid_range(buf, 1024);
-		//memcpy_fromio(buf2, buf, 512);
 		if(memcmp(buf, buf1, 512))
 		{
 			printk("%d no ok\n", index);
@@ -2427,33 +2043,21 @@ void read_sd_block_demo(void)
 	str_buf[0] = 0;
 	for(i = 1; i <= 512; i++)
 	{
-		if(buf[i-1])
-		{
-			zero_flag = 0;
-			break;
-		}
-	}
-	//if(!zero_flag)
-	{
-		for(i = 1; i <= 512; i++)
-		{
-			
-			if(buf[i-1] != buf1[i-1])
-			{
-				sprintf(str_buf+strlen(str_buf), 
-						"%3d:%02x:%02x ", i-1, 
-						buf[i-1], buf1[i-1]);
-			}
-			if(strlen(str_buf) > 50)
-			{
-				printk("%s\n", str_buf);
-				str_buf[0] = 0;
-			}
 
+		if(buf[i-1] != buf1[i-1])
+		{
+			sprintf(str_buf+strlen(str_buf), 
+					"%3d:%02x:%02x ", i-1, 
+					buf[i-1], buf1[i-1]);
 		}
+		if(strlen(str_buf) > 50)
+		{
+			printk("%s\n", str_buf);
+			str_buf[0] = 0;
+		}
+
 	}
 	printk("%s\n", str_buf);
-	//iounmap(buf);
 }
 
 void read_sd_block(unsigned int index)

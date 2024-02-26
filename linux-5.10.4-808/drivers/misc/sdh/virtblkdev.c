@@ -22,7 +22,7 @@ static int Tiny4412_block_major=0;
 static struct request_queue *virtblkdev_queue; 
 static struct gendisk *virtblkdev_disk;
 
-#define TINY4412_BLK_DEV_BYTES        (1024*1024*4)  /*设置块设备的大小*/
+#define TINY4412_BLK_DEV_BYTES        (1024*1024*16)  /*设置块设备的大小*/
 static unsigned char *sizeof_p;
 
 /*
@@ -34,7 +34,6 @@ unsigned long nsect :  扇区读写数量
 char *buffer        :  读写的缓冲区指针
 int write           :  是读还是写
 */
-int SDH_ReadMultiBlocks(uint8_t *readbuff, uint32_t ReadAddr, uint16_t BlockSize, uint32_t NumberOfBlocks);
 static void Tiny4412_block_dev_sector_read_write(unsigned long sector,unsigned long nsect, char *buffer, int write)
 {
 		/*块设备最小单位是一个扇区，一个扇区的字节数是512字节*/
@@ -52,9 +51,6 @@ static void Tiny4412_block_dev_sector_read_write(unsigned long sector,unsigned l
 		else      /*读操作*/
 		{
 			memcpy(buffer,sizeof_p + offset, nbytes);
-			//SDH_ReadMultiBlocks(buffer, 
-			//		 offset, nbytes, 1);
-			//printk("offset %ld nbytes:%ld", offset, nbytes);
 		}
 }
 

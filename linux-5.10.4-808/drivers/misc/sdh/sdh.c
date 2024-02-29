@@ -1141,7 +1141,7 @@ SDH_Stat_Type SDH_CreateADMA2Descriptor(SDH_ADMA2_Desc_Type *adma2Entries, uint3
 
         /* Each descriptor for ADMA2 is 64-bit in length */
         adma2Entries[i].address = (dataLen == 0U) ? (uint32_t)(uintptr_t)&bootDummy : (uint32_t)(uintptr_t)data;
-        adma2Entries[i].address = virt_to_phys((volatile void *)(adma2Entries[i].address));
+        adma2Entries[i].address = virt_to_phys((void *)(adma2Entries[i].address));
 	//printk("0x%px adma2Entries[i].address:%px\n", data, adma2Entries[i].address);
 	adma2Entries[i].attribute = (dmaBufferLen << SDH_ADMA2_DESCRIPTOR_LENGTH_POS);
         adma2Entries[i].attribute |= (dataLen == 0U) ? 0U : (SDH_ADMA2_DESC_FLAG_TRANSFER);
@@ -2052,12 +2052,14 @@ void read_sd_block_demo(void)
 	int i;
 	unsigned int index = 0;
 	static char buf1[1024] = {0};
-	static char *buf = NULL;
+	char *buf = NULL;
 	static char str_buf[4096] = {0};
 	
+	buf = kmalloc(4096, ZONE_DMA32);
 	if(!buf)
 	{
-		buf = kmalloc(4096, ZONE_DMA32);
+		printk("malloc buf error\n");
+		return;
 	}
 	while(index < 5000)
 	{
@@ -2103,6 +2105,7 @@ void read_sd_block_demo(void)
 
 	}
 	printk("%s\n", str_buf);
+	kfree(buf);
 }
 
 void read_sd_block(unsigned int index)
@@ -2111,12 +2114,15 @@ void read_sd_block(unsigned int index)
 	int i;
 	int zero_flag = 1;
 	//static char buf[1024] = {0};
-	static char *buf = NULL;
+	char *buf = NULL;
 	static char str_buf[4096] = {0};
 	
+	buf = kmalloc(4096, ZONE_NORMAL);
 	if(!buf)
-		buf = kmalloc(4096, ZONE_NORMAL);
-
+	{
+		printk("mallloc buffer error\n");
+		return;
+	}
 	printk("buf:%px rand:%d", buf, index);
 	ret = SDH_ReadMultiBlocks(buf, index, 512, 2);
 	printk("ret %d\n", ret);
@@ -2145,6 +2151,7 @@ void read_sd_block(unsigned int index)
 		}
 	}
 	printk("%s\n", str_buf);
+	kfree(buf);
 }
 
 void write_sd_block(unsigned int index)
@@ -2152,15 +2159,20 @@ void write_sd_block(unsigned int index)
 	int i;
 	int ret;
 	//char buf[1024] = {0};
-	static char *buf = NULL;
+	char *buf = NULL;
+	buf = kmalloc(4096, ZONE_NORMAL);
 	if(!buf)
-		buf = kmalloc(4096, ZONE_NORMAL);
+	{
+		printk("mallloc buffer error\n");
+		return;
+	}
 	for(i = 0; i < 1024; i++)
 		buf[i] = i;
 	ret = SDH_WriteMultiBlocks(buf, index, 512, 1);
 	printk("index :%d ret=%d\n", index, ret);
 	ret = SDH_WriteMultiBlocks(buf+512, index+1, 512, 1);
 	printk("index :%d ret=%d\n", index, ret);
+	kfree(buf);
 }
 
 static int mmc_block_major=0;
@@ -2309,12 +2321,9 @@ static void  sdblkdev_deinit(void)
 
 static int __init shm_driver_init(void) {  
     int ret = 0;
-
-    if(!mapped_addr)
-    {
-	mapped_addr = ioremap(PHYSICAL_ADDRESS, SIZE);  
-    	printk("0x%x mapped_addr 0x%px\n", PHYSICAL_ADDRESS, mapped_addr); 
-    }
+    
+    mapped_addr = ioremap(PHYSICAL_ADDRESS, SIZE);
+    printk("0x%x mapped_addr 0x%px\n", PHYSICAL_ADDRESS, mapped_addr); 
     
     if (!mapped_addr) {  
             printk("ioremap_nocache error!\n");
@@ -2323,12 +2332,11 @@ static int __init shm_driver_init(void) {
 
     adma2Entries = kmalloc(1024, ZONE_DMA32); //ADMA2ENTRIES_SIZE
     adma2EntriesPhy = (void *)virt_to_phys(adma2Entries);
-    //adma2EntriesPhy = (void*)0x3F000000;
-    //adma2Entries = ioremap((phys_addr_t)adma2EntriesPhy, 1024);
     printk("0x%px mapped_addr 0x%px size:%ld\n", 
 		    adma2EntriesPhy, adma2Entries, ADMA2ENTRIES_SIZE); 
 
     SDH_EnableIntStatus(SDH_INT_ALL);
+
     {
 	uint32_t int_status;
 	SD_Error errorstatus = SD_OK;
@@ -2394,7 +2402,12 @@ static void __exit shm_driver_exit(void) {
 	unregister_chrdev_region(first_dev, 1);
 	cdev_del(&my_cdev);
 	//kfree(my_cdev);
-    	printk("iounmap\n"); 
+	if(adma2Entries)
+	{
+		kfree(adma2Entries);
+		adma2Entries = NULL;
+	}
+    	printk("exit\n"); 
 }
 
 module_init(shm_driver_init);

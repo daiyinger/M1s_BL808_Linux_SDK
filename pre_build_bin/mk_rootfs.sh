@@ -6,6 +6,13 @@ if [ -f $xram_net_path ]; then
 	cp $xram_net_path rootfs/lib/modules/
 fi
 
+sdh_path=$SHELL_DIR/../out/modules/lib/modules/5.10.4/build/drivers/misc/sdh/sdh.ko
+if [ -f $sdh_path ]; then
+	echo "cp sdh.ko ..."
+	cp $sdh_path rootfs/lib/modules/
+fi
+
+
 if [ ! -d rootfs/dev ]; then
 	mkdir rootfs/dev
 	cd rootfs/dev

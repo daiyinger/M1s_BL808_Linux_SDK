@@ -2,6 +2,7 @@
 #define IRQ_NUM_BASE 16
 #include "sdh.h"
 
+typedef void (*irq_callback_t)(uint32_t, void *);
 volatile void *mapped_addr = NULL;  
 #define SDH_BASE_ADDR mapped_addr 
 
@@ -16,10 +17,28 @@ volatile int ipi_cnt = 0;
 static dev_t first_dev;  
 static struct cdev my_cdev;  
 static struct class *my_class; 
+wait_queue_head_t sd_int_queue;
+
+static volatile SD_Error SDH_WaitStatus   =  SD_WAITING;
 
 void read_sd_block(unsigned int index);
 void write_sd_block(unsigned int index);
 void read_sd_block_demo(void);
+int register_ipc_isr(irq_callback_t func);
+int unregister_ipc_isr(irq_callback_t func);
+
+volatile int sdh_irq_cnt = 0;
+uint32_t sdh_irq = 0;
+static void sdh_irq_handler(uint32_t val, void *para)
+{
+	val = val >> 8;
+	if(val)
+	{
+		sdh_irq_cnt++;
+		SDH_WaitStatus = SD_OK;
+		wake_up_interruptible(&sd_int_queue);
+	}	
+}
 
 /****************************************************************************/ /**
  * @brief  SDH enable interrupt
@@ -323,7 +342,6 @@ SDH_Stat_Type SDH_WaitCommandDone(SDH_CMD_Cfg_Type *cmd)
     return stat;
 }
 
-static SD_Error SDH_WaitStatus   =  SD_WAITING;
 static SDH_CMD_Cfg_Type             SDH_CMD_Cfg_TypeInstance;
 static SDH_Data_Cfg_Type            SDH_Data_Cfg_TypeInstance;
 static SDH_Trans_Cfg_Type           SDH_Trans_Cfg_TypeInstance={&SDH_Data_Cfg_TypeInstance,&SDH_CMD_Cfg_TypeInstance};
@@ -1582,8 +1600,9 @@ SD_Error SDH_ReadMultiBlocks(uint8_t *readbuff, uint32_t ReadAddr, uint16_t Bloc
 	
 	SDH_ITConfig(SDH_INT_DATA_COMPLETED|SDH_INT_DATA_ERRORS|SDH_INT_DMA_ERROR|SDH_INT_AUTO_CMD12_ERROR,ENABLE);
 	
+	//printk("sdh_irq_cnt:%d stat:%x\r\n", sdh_irq_cnt, sdh_irq);
 	//wait for Xfer status. might pending here in multi-task OS
-	//while(SDH_WaitStatus == SD_WAITING){}	
+	//wait_event_interruptible(sd_int_queue, (SDH_WaitStatus != SD_WAITING));
 	while(1)
 	{
 		uint32_t intFlag;
@@ -2009,6 +2028,7 @@ SD_Error SDH_WriteMultiBlocks(uint8_t *writebuff, uint32_t WriteAddr, uint16_t B
 		else
 			return SD_DATA_ERROR;
 	}
+	//while(SDH_WaitStatus == SD_WAITING){schedule();msleep(1);}
 	while(1)
 	{
 		uint32_t intFlag;
@@ -2329,14 +2349,15 @@ static int __init shm_driver_init(void) {
             printk("ioremap_nocache error!\n");
 	    return -ENOMEM;  
     }
+    init_waitqueue_head(&sd_int_queue);
 
     adma2Entries = kmalloc(1024, ZONE_DMA32); //ADMA2ENTRIES_SIZE
     adma2EntriesPhy = (void *)virt_to_phys(adma2Entries);
     printk("0x%px mapped_addr 0x%px size:%ld\n", 
 		    adma2EntriesPhy, adma2Entries, ADMA2ENTRIES_SIZE); 
 
+    //register_ipc_isr(sdh_irq_handler);
     SDH_EnableIntStatus(SDH_INT_ALL);
-
     {
 	uint32_t int_status;
 	SD_Error errorstatus = SD_OK;
@@ -2368,6 +2389,7 @@ static int __init shm_driver_init(void) {
 	printk("init ok\n");
     }
     //SDH_EnableIntSource(SDH_INT_ALL);
+    SDH_ClearIntStatus(SDH_INT_ALL);
 
     sdblkdev_init();
 
@@ -2394,6 +2416,7 @@ static int __init shm_driver_init(void) {
 }
 
 static void __exit shm_driver_exit(void) {
+    	//unregister_ipc_isr(sdh_irq_handler);
 	sdblkdev_deinit();
     	iounmap(mapped_addr); 
 	//iounmap((phys_addr_t)adma2EntriesPhy);

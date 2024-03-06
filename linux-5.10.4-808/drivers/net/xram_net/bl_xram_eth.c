@@ -534,17 +534,52 @@ static int init_netdevs(struct bl_eth_device *dev)
     return 0;
 }
 
-static irqreturn_t ipc_irq_handler(int irq, void *dev_id)
-{
-    struct bl_eth_device *dev = dev_id;
-    u32 val;
-    u8 events;
 
-    val = readl(&dev->ipc2_regs->cpu0_ipc_irsrr);
+#define IPC_ISR_MAX 32
+typedef void (*irq_callback_t)(uint32_t, void *);
+irq_callback_t ipc_isr_callbacks[IPC_ISR_MAX] = {0};
+int ipc_isr_callback_num = 0;
+
+
+int register_ipc_isr(irq_callback_t func)
+{
+    printk("ipc_isr_callback_num:%d\n", ipc_isr_callback_num);
+    if(ipc_isr_callback_num >= IPC_ISR_MAX)
+        return -1;
+    ipc_isr_callbacks[ipc_isr_callback_num] = func;
+    ipc_isr_callback_num++;
+    return 0;
+}
+
+EXPORT_SYMBOL(register_ipc_isr);
+
+int unregister_ipc_isr(irq_callback_t func)
+{
+    int i;
+    for(i = 0; i < ipc_isr_callback_num; i++)
+    {
+            if(ipc_isr_callbacks[i] == func)
+            {
+                    break;
+            }
+    }
+    ipc_isr_callback_num--;
+    for(; i < ipc_isr_callback_num; i++)
+    {
+            ipc_isr_callbacks[i] = ipc_isr_callbacks[i+1];
+    }
+    return 0;
+}
+EXPORT_SYMBOL(unregister_ipc_isr);
+
+static void xram_irq_handler(uint32_t val, void *para)
+{
+    u8 events;
+    struct bl_eth_device *dev = para;
     val &= BL_XRAM_RING_EVENT_MASK;
     events = BL_D0_NET_EVENT(val);
-    writel(val, &dev->ipc2_regs->cpu0_ipc_icr);
-
+    if(!events)
+	    return;
     //printk("ipc_irq_handler val:%x events:%x\n", val, events);
 
     spin_lock(&dev->net_ring_events_lock);
@@ -552,7 +587,17 @@ static irqreturn_t ipc_irq_handler(int irq, void *dev_id)
     spin_unlock(&dev->net_ring_events_lock);
 
     queue_work(dev->workqueue, &dev->main_work);
+}
 
+static irqreturn_t ipc_irq_handler(int irq, void *dev_id)
+{
+    int i;
+    u32 val;
+    struct bl_eth_device *dev = dev_id;
+    val = readl(&dev->ipc2_regs->cpu0_ipc_irsrr);
+    for(i = 0; i < ipc_isr_callback_num; i++)
+            ipc_isr_callbacks[i](val, dev);
+    writel(val, &dev->ipc2_regs->cpu0_ipc_icr);
     return IRQ_HANDLED;
 }
 
@@ -607,6 +652,8 @@ static int bl_ipc_init(struct bl_eth_device *dev)
     printk("bl_ipc_init dev->irq:%d\n", dev->irq);
     bl_reset_txrx(dev);
 
+
+    register_ipc_isr(xram_irq_handler);
     if ((ret = request_irq(dev->irq, ipc_irq_handler, IRQF_SHARED, BL_DRV_NAME, dev))) {
 	printk("xram_net req irq err:%d\n", ret);
         goto err;
@@ -614,6 +661,7 @@ static int bl_ipc_init(struct bl_eth_device *dev)
         BL_UNMASK_IRQ(dev, BL_XRAM_RING_EVENT_MASK);
         dev->irq_requested = true;
     }
+
 
     return 0;
 
